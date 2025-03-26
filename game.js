@@ -234,7 +234,8 @@ class Game {
         
         // Calculate target scale - more zoomed in (higher scale) when closer to ground
         // Linear interpolation between maxScale (at ground) and minScale (at maxHeight)
-        this.camera.targetScale = this.camera.maxScale - normalizedDistance * (this.camera.maxScale - this.camera.minScale);
+        // Apply the baseScale as a multiplier to allow power-ups to affect zoom
+        this.camera.targetScale = (this.camera.maxScale - normalizedDistance * (this.camera.maxScale - this.camera.minScale)) * this.camera.baseScale;
         
         // Smoothly interpolate current scale to target scale
         this.camera.scale += (this.camera.targetScale - this.camera.scale) * this.camera.zoomSpeed;
@@ -552,14 +553,12 @@ class Game {
                 break;
                 
             case 'shrink':
-                this.player.isShrunk = true;
-                this.player.width = this.player.originalWidth * 0.6;
-                this.player.height = this.player.originalHeight * 0.6;
-                // Shrink wears off after 5 seconds
+                // Instead of shrinking the player, zoom out the camera
+                this.camera.baseScale = this.camera.baseScale * 0.7; // Zoom out by 30%
+                
+                // Reset the camera scale after power-up duration
                 setTimeout(() => {
-                    this.player.isShrunk = false;
-                    this.player.width = this.player.originalWidth;
-                    this.player.height = this.player.originalHeight;
+                    this.camera.baseScale = 1; // Reset to normal scale
                 }, this.powerUpDuration);
                 break;
                 
