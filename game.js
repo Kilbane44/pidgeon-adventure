@@ -3,6 +3,9 @@ class Game {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
         
+        // Remove any existing UI elements to prevent duplicates
+        this.cleanupExistingUI();
+        
         // Load game images
         this.images = {
             playerFrames: []  // Will hold all animation frames
@@ -29,6 +32,26 @@ class Game {
         }
     }
     
+    cleanupExistingUI() {
+        // Remove any existing UI elements
+        const elementsToRemove = ['scoreDisplay', 'dayDisplay', 'startScreen', 'gameOverScreen', 'shopScreen'];
+        
+        elementsToRemove.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.remove();
+            }
+        });
+        
+        // Remove any existing event listeners
+        if (this.keyDownHandler) {
+            document.removeEventListener('keydown', this.keyDownHandler);
+        }
+        if (this.keyUpHandler) {
+            document.removeEventListener('keyup', this.keyUpHandler);
+        }
+    }
+    
     initGame() {
         // Make canvas full window size
         this.canvas.width = window.innerWidth;
@@ -40,8 +63,8 @@ class Game {
             this.canvas.height = window.innerHeight;
         });
         
-        // Position ground even lower on the screen (9/10 of the screen height from the top)
-        const groundPosition = this.canvas.height;
+        // Position ground lower on the screen (9/10 of the screen height from the top)
+        const groundPosition = this.canvas.height * 9/10;
         
         // Camera properties
         this.camera = {
@@ -57,6 +80,10 @@ class Game {
             maxHeight: this.canvas.height * 10  // Allow flying much higher
         };
         
+        // Add day counter
+        this.currentDay = 1;
+        this.totalMoney = 0;
+        
         // Generate stars once at initialization
         this.stars = this.generateStars(300);
         
@@ -68,9 +95,9 @@ class Game {
         this.energy = {
             current: 100,       // Start with full energy
             max: 100,           // Maximum energy
-            drainRate: 0.0625,  // Energy drain when flying up (reduced from 0.5)
-            groundDrainRate: 0.03125, // Energy drain when on ground (reduced from 0.25)
-            regenRate: 0.02,     // Energy regen when falling
+            drainRate: 0.05,    // Reduced from 0.0625 to match slower movement
+            groundDrainRate: 0.02, // Reduced from 0.03125 for slower drain on ground
+            regenRate: 0.015,   // Reduced from 0.02 for slower regeneration
             isEmpty: false,     // Flag for when energy is depleted
             barWidth: 200,      // Width of energy bar in pixels
             barHeight: 20,      // Height of energy bar in pixels
@@ -84,14 +111,14 @@ class Game {
             width: 64,  // Adjusted for sprite size
             height: 64, // Adjusted for sprite size
             velocity: 0,
-            gravity: 0.15,
-            maxVelocity: 6,
+            gravity: 0.1,            // Reduced from 0.15
+            maxVelocity: 4,          // Reduced from 6
             hasShield: false,
             isShrunk: false,
             originalWidth: 64,  // Adjusted for sprite size
             originalHeight: 64, // Adjusted for sprite size
             isHolding: false,
-            swoopForce: -0.5,
+            swoopForce: -0.35,       // Reduced from -0.5
             swoopAngle: 0,
             frameIndex: 0,          // Current animation frame
             frameTimer: 0,          // Timer for frame animation
@@ -102,8 +129,8 @@ class Game {
             // Boost power-up properties - reduced speeds to prevent camera issues
             isBoosting: false,
             boostSpeed: 0,
-            boostMaxSpeed: 8,       // Reduced from 15 to prevent objects vanishing
-            boostUpForce: -10,       // Increased upward force for more vertical boost
+            boostMaxSpeed: 6,       // Reduced from 8
+            boostUpForce: -6,       // Reduced from -10
             boostDuration: 3000,    // 3 seconds of boost
             boostTimer: 0,
             cometTrail: [],          // Array to store comet trail particles
@@ -117,7 +144,7 @@ class Game {
         this.powerPoints = [];
         this.score = 0;
         this.powerPointsCollected = 0;
-        this.gameSpeed = 2;
+        this.gameSpeed = 1.5;       // Reduced from 2
         this.isGameOver = false;
         this.isGameStarted = false;
         this.lastObstacleX = 0;
@@ -131,34 +158,71 @@ class Game {
         this.lastGroundObstacleDistance = 0;  // Track when the last ground obstacle was spawned
         this.groundObstacleInterval = 3000;   // Spawn ground obstacles every 3000 units
         
+        // Create UI elements first
+        this.createUI();
+        
+        // Then set up event listeners that reference UI elements
         this.setupEventListeners();
+        
+        // Show start screen
         this.showStartScreen();
+        
+        // Start initial game loop for visuals only
+        this.gameLoop();
     }
     
     setupEventListeners() {
-        document.addEventListener('keydown', (e) => {
+        document.removeEventListener('keydown', this.keyDownHandler);
+        document.removeEventListener('keyup', this.keyUpHandler);
+        
+        // Create bound handlers that we can remove later if needed
+        this.keyDownHandler = (e) => {
             if (e.code === 'Space') {
                 e.preventDefault(); // Prevent page scrolling with space
+                console.log("Space key pressed! isGameStarted:", this.isGameStarted); // Debug
                 if (!this.isGameStarted) {
                     this.startGame();
                 } else if (!this.isGameOver) {
                     this.player.isHolding = true;
                 }
             }
-        });
+        };
         
-        document.addEventListener('keyup', (e) => {
+        this.keyUpHandler = (e) => {
             if (e.code === 'Space') {
                 e.preventDefault(); // Prevent page scrolling with space
                 if (!this.isGameOver) {
                     this.player.isHolding = false;
                 }
             }
-        });
+        };
         
-        document.getElementById('restartButton').addEventListener('click', () => {
-            this.resetGame();
-        });
+        document.addEventListener('keydown', this.keyDownHandler);
+        document.addEventListener('keyup', this.keyUpHandler);
+        
+        // Only add the restart button handler if the button exists
+        const restartButton = document.getElementById('restartButton');
+        if (restartButton) {
+            // Remove existing event listeners if any
+            restartButton.replaceWith(restartButton.cloneNode(true));
+            
+            // Add new event listener
+            document.getElementById('restartButton').addEventListener('click', () => {
+                this.startNextDay();
+            });
+        }
+        
+        // Add buy energy upgrade button handler
+        const buyEnergyBtn = document.getElementById('buyEnergyBtn');
+        if (buyEnergyBtn) {
+            // Remove existing event listeners if any
+            buyEnergyBtn.replaceWith(buyEnergyBtn.cloneNode(true));
+            
+            // Add new event listener
+            document.getElementById('buyEnergyBtn').addEventListener('click', () => {
+                this.buyEnergyUpgrade();
+            });
+        }
     }
     
     showStartScreen() {
@@ -195,7 +259,7 @@ class Game {
         this.player.isInCloud = false;
         this.score = 0;
         this.powerPointsCollected = 0;
-        this.gameSpeed = 2;
+        this.gameSpeed = 1.5;
         this.isGameOver = false;
         this.isGameStarted = true;
         document.getElementById('gameOverScreen').classList.add('hidden');
@@ -205,7 +269,6 @@ class Game {
         this.camera.y = 0;
         this.distanceTraveled = 0;
         this.maxHeight = 0;
-        this.gameLoop();
         
         // Reset energy as well
         this.energy.current = this.energy.max;
@@ -217,10 +280,14 @@ class Game {
     }
     
     gameLoop() {
-        if (this.isGameOver) return;
+        // Always update and draw, but only update game logic if game is active
+        if (this.isGameStarted && !this.isGameOver) {
+            this.update();
+        }
         
-        this.update();
         this.draw();
+        
+        // Continue the loop even if game over or not started (to show start/shop screens)
         requestAnimationFrame(() => this.gameLoop());
     }
     
@@ -402,8 +469,21 @@ class Game {
             this.gameSpeed += 0.3;
         }
         
+        // Track previous distance for money earning calculation
+        const previousDistance = this.distanceTraveled;
+        
         // Update distance traveled
         this.distanceTraveled += this.gameSpeed;
+        
+        // Award money for every 1000 distance traveled
+        const previousThousand = Math.floor(previousDistance / 1000);
+        const currentThousand = Math.floor(this.distanceTraveled / 1000);
+        
+        if (currentThousand > previousThousand) {
+            // Player has crossed another 1000 distance mark, award 1 money
+            this.powerPointsCollected += 1;
+            this.updateScore();
+        }
         
         // Update max height (measured from ground, so lower y values = higher altitude)
         const currentHeight = this.camera.groundY - this.player.y;
@@ -582,7 +662,8 @@ class Game {
                 break;
                 
             case 'money':
-                this.powerPointsCollected++;
+                // Increase money by 10 instead of 1
+                this.powerPointsCollected += 10;
                 // Money now also gives 10 energy back
                 this.energy.current = Math.min(this.energy.max, this.energy.current + 10);
                 // Reset exhausted state if enough energy was restored
@@ -641,23 +722,72 @@ class Game {
     }
     
     gameOver() {
+        if (this.isGameOver) return;
+        
         this.isGameOver = true;
-        document.getElementById('finalScore').textContent = this.score;
-        document.getElementById('finalPowerPoints').textContent = this.powerPointsCollected;
         
-        // Add max height and total distance to game over screen
-        const maxHeightElement = document.getElementById('finalHeight');
-        const totalDistanceElement = document.getElementById('finalDistance');
+        // Update total money
+        this.totalMoney += this.powerPointsCollected;
         
-        if (maxHeightElement) {
-            maxHeightElement.textContent = Math.round(this.maxHeight);
+        // Update shop screen stats
+        document.getElementById('dayComplete').textContent = this.currentDay;
+        document.getElementById('moneyCollected').textContent = this.powerPointsCollected;
+        document.getElementById('totalMoney').textContent = this.totalMoney;
+        document.getElementById('currentMaxEnergy').textContent = this.energy.max;
+        document.getElementById('restartButton').textContent = `Sleep and Start Day ${this.currentDay + 1}`;
+        
+        // Enable/disable buy button based on money
+        const buyEnergyBtn = document.getElementById('buyEnergyBtn');
+        if (buyEnergyBtn) {
+            buyEnergyBtn.disabled = this.totalMoney < 20;
         }
         
-        if (totalDistanceElement) {
-            totalDistanceElement.textContent = Math.round(this.distanceTraveled);
-        }
-        
+        // Show game over screen which now functions as shop
         document.getElementById('gameOverScreen').classList.remove('hidden');
+    }
+    
+    startNextDay() {
+        // Increment day counter
+        this.currentDay++;
+        
+        // Reset game (similar to resetGame but keep total money)
+        this.player.y = this.player.startY;
+        this.player.velocity = 0;
+        this.player.hasShield = false;
+        this.player.width = this.player.originalWidth;
+        this.player.height = this.player.originalHeight;
+        this.player.isHolding = false;
+        this.player.swoopAngle = 0;
+        this.camera.scale = 1;
+        this.camera.targetScale = 1;
+        this.camera.baseScale = 1;
+        this.obstacles = [];
+        this.powerPoints = [];
+        this.clouds = [];
+        this.cloudParticles = [];
+        this.generateClouds(15);
+        this.score = 0;
+        this.powerPointsCollected = 0;
+        this.gameSpeed = 1.5;
+        this.isGameOver = false;
+        this.isGameStarted = true;
+        document.getElementById('gameOverScreen').classList.add('hidden');
+        this.updateScore();
+        this.camera.x = 0;
+        this.camera.y = 0;
+        this.distanceTraveled = 0;
+        this.maxHeight = 0;
+        
+        // Reset energy to the current max value (which may have been upgraded)
+        this.energy.current = this.energy.max;
+        this.energy.isEmpty = false;
+        this.player.isExhausted = false;
+        
+        // Update day display
+        const dayElement = document.getElementById('dayDisplay');
+        if (dayElement) {
+            dayElement.innerHTML = `<span>Day: ${this.currentDay}</span>`;
+        }
     }
     
     updateScore() {
@@ -668,7 +798,7 @@ class Game {
         const currentHeight = Math.round(this.camera.groundY - this.player.y);
         const formattedDistance = Math.round(this.distanceTraveled);
         
-        // Add to DOM or update existing elements
+        // Update height and distance
         const heightElement = document.getElementById('height');
         const distanceElement = document.getElementById('distance');
         
@@ -678,6 +808,12 @@ class Game {
         
         if (distanceElement) {
             distanceElement.textContent = `Distance: ${formattedDistance}`;
+        }
+        
+        // Update day display separately
+        const dayElement = document.getElementById('dayDisplay');
+        if (dayElement) {
+            dayElement.innerHTML = `<span>Day: ${this.currentDay}</span>`;
         }
     }
     
@@ -1214,10 +1350,10 @@ class Game {
         
         // Choose color based on energy level
         let fillColor;
-        if (this.energy.current < 20) {
-            fillColor = '#FF0000'; // Red when energy is critical
-        } else if (this.energy.current < 50) {
-            fillColor = '#FFCC00'; // Yellow when energy is low
+        if (this.energy.current < this.energy.max * 0.2) {
+            fillColor = '#FF0000'; // Red when energy is critical (less than 20%)
+        } else if (this.energy.current < this.energy.max * 0.5) {
+            fillColor = '#FFCC00'; // Yellow when energy is low (less than 50%)
         } else {
             fillColor = '#00CC00'; // Green when energy is good
         }
@@ -1246,6 +1382,198 @@ class Game {
             barX + this.energy.barWidth / 2, 
             barY + this.energy.barHeight / 2
         );
+    }
+    
+    createUI() {
+        
+        
+        // Create a separate day display for the top right
+        if (!document.getElementById('dayDisplay')) {
+            const dayDiv = document.createElement('div');
+            dayDiv.id = 'dayDisplay';
+            dayDiv.innerHTML = `<span>Day: ${this.currentDay}</span>`;
+            document.body.appendChild(dayDiv);
+        }
+        
+        // Check if start screen already exists
+        if (!document.getElementById('startScreen')) {
+            // Create start screen
+            const startScreen = document.createElement('div');
+            startScreen.id = 'startScreen';
+            startScreen.className = 'screen';
+            startScreen.innerHTML = '<h1>Pidgeon Adventure</h1><p>Press SPACE to start flying</p><p>Hold SPACE to flap wings</p>';
+            document.body.appendChild(startScreen);
+        }
+        
+        // Check if game over screen already exists
+        if (!document.getElementById('gameOverScreen')) {
+            // Create game over screen (now used for shop)
+            const gameOverScreen = document.createElement('div');
+            gameOverScreen.id = 'gameOverScreen';
+            gameOverScreen.className = 'screen hidden';
+            gameOverScreen.innerHTML = `
+                <h1>Day <span id="dayComplete">${this.currentDay}</span> Complete</h1>
+                <div id="shopStats">
+                    <p>Money Collected: <span id="moneyCollected">0</span></p>
+                    <p>Total Money: <span id="totalMoney">0</span></p>
+                    <p>Current Max Energy: <span id="currentMaxEnergy">${this.energy.max}</span></p>
+                </div>
+                
+                <div id="shopUpgrades">
+                    <div class="upgrade-item">
+                        <h3>Increase Max Energy</h3>
+                        <p>+10 Max Energy</p>
+                        <p class="cost">Cost: 20 Money</p>
+                        <button id="buyEnergyBtn">Buy Upgrade</button>
+                    </div>
+                </div>
+                
+                <button id="restartButton">Sleep and Start Day ${this.currentDay + 1}</button>
+            `;
+            document.body.appendChild(gameOverScreen);
+        }
+        
+        // Only add style if it doesn't exist
+        if (!document.getElementById('game-styles')) {
+            // Add some basic styling
+            const style = document.createElement('style');
+            style.id = 'game-styles';
+            style.textContent = `
+                #scoreDisplay {
+                    position: absolute;
+                    top: 20px;
+                    left: 20px;
+                    background: rgba(0, 0, 0, 0.5);
+                    color: white;
+                    padding: 10px;
+                    border-radius: 5px;
+                    font-family: Arial, sans-serif;
+                    z-index: 10;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 5px;
+                }
+                #dayDisplay {
+                    position: absolute;
+                    top: 20px;
+                    right: 20px;
+                    background: rgba(0, 0, 0, 0.5);
+                    color: white;
+                    padding: 10px 15px;
+                    border-radius: 5px;
+                    font-family: Arial, sans-serif;
+                    z-index: 10;
+                    font-size: 18px;
+                    font-weight: bold;
+                }
+                .screen {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    align-items: center;
+                    background: rgba(0, 0, 0, 0.7);
+                    color: white;
+                    font-family: Arial, sans-serif;
+                    z-index: 100;
+                }
+                .hidden {
+                    display: none;
+                }
+                #restartButton {
+                    margin-top: 20px;
+                    padding: 10px 20px;
+                    font-size: 18px;
+                    background: #4169E1;
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                #restartButton:hover {
+                    background: #3457b2;
+                    transform: scale(1.05);
+                }
+                #shopStats {
+                    background: rgba(0, 0, 0, 0.5);
+                    padding: 15px 30px;
+                    border-radius: 10px;
+                    margin: 20px 0;
+                    text-align: center;
+                }
+                #shopStats p {
+                    margin: 10px 0;
+                    font-size: 18px;
+                }
+                #shopUpgrades {
+                    display: flex;
+                    gap: 20px;
+                    margin: 20px 0;
+                }
+                .upgrade-item {
+                    background: rgba(30, 30, 30, 0.8);
+                    border: 2px solid #4169E1;
+                    border-radius: 8px;
+                    padding: 15px;
+                    width: 250px;
+                    text-align: center;
+                }
+                .upgrade-item h3 {
+                    margin-top: 0;
+                    color: #B4D6FF;
+                }
+                .cost {
+                    font-weight: bold;
+                    color: gold;
+                }
+                #buyEnergyBtn {
+                    background-color: #4CAF50;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 5px;
+                    color: white;
+                    font-weight: bold;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                #buyEnergyBtn:hover {
+                    background-color: #45a049;
+                    transform: scale(1.05);
+                }
+                #buyEnergyBtn:disabled {
+                    background-color: #777;
+                    cursor: not-allowed;
+                    transform: none;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+    }
+    
+    buyEnergyUpgrade() {
+        const ENERGY_UPGRADE_COST = 20;
+        
+        // Check if player has enough money
+        if (this.totalMoney >= ENERGY_UPGRADE_COST) {
+            // Deduct money and increase max energy
+            this.totalMoney -= ENERGY_UPGRADE_COST;
+            this.energy.max += 10;
+            
+            // Update shop screen stats
+            document.getElementById('totalMoney').textContent = this.totalMoney;
+            document.getElementById('currentMaxEnergy').textContent = this.energy.max;
+            
+            // Enable/disable buy button based on new money balance
+            const buyEnergyBtn = document.getElementById('buyEnergyBtn');
+            if (buyEnergyBtn) {
+                buyEnergyBtn.disabled = this.totalMoney < ENERGY_UPGRADE_COST;
+            }
+        }
     }
 }
 
