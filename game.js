@@ -3,6 +3,33 @@ class Game {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
         
+        // Load game images
+        this.images = {
+            playerFrames: []  // Will hold all animation frames
+        };
+
+        // Remove the visible GIF element since we now have frame images
+        let loadedFrames = 0;
+        
+        // Just use the two frames we have available
+        const numFrames = 2; // Only using bird0.png and bird1.png
+        
+        // Load the two bird frames
+        for (let i = 0; i < numFrames; i++) {
+            const frameImg = new Image();
+            // Use preload function to ensure all frames are loaded
+            frameImg.onload = () => {
+                loadedFrames++;
+                if (loadedFrames >= numFrames) {
+                    this.initGame();
+                }
+            };
+            frameImg.src = `assets/bird${i}.png`;
+            this.images.playerFrames.push(frameImg);
+        }
+    }
+    
+    initGame() {
         // Make canvas full window size
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
@@ -13,8 +40,8 @@ class Game {
             this.canvas.height = window.innerHeight;
         });
         
-        // Position ground near the bottom (7/8 of the screen height from the top)
-        const groundPosition = this.canvas.height * 7/8;
+        // Position ground even lower on the screen (9/10 of the screen height from the top)
+        const groundPosition = this.canvas.height;
         
         // Camera properties
         this.camera = {
@@ -35,20 +62,24 @@ class Game {
         
         this.player = {
             x: 100,
-            y: groundPosition - 100, // Position player above the ground
-            width: 40,
-            height: 40,
+            y: groundPosition - 150, // Positioned higher above the lowered ground
+            width: 64,  // Adjusted for sprite size
+            height: 64, // Adjusted for sprite size
             velocity: 0,
             gravity: 0.15,
             maxVelocity: 6,
             hasShield: false,
             isShrunk: false,
-            originalWidth: 40,
-            originalHeight: 40,
+            originalWidth: 64,  // Adjusted for sprite size
+            originalHeight: 64, // Adjusted for sprite size
             isHolding: false,
             swoopForce: -0.5,
             swoopAngle: 0,
-            startY: groundPosition - 100 // Store starting Y relative to ground
+            frameIndex: 0,          // Current animation frame
+            frameTimer: 0,          // Timer for frame animation
+            frameDuration: 125,     // Each frame lasts 125ms (250ms for complete 2-frame cycle)
+            numberOfFrames: 2,      // Total number of frames (just 2 frames)
+            startY: groundPosition - 150 // Store starting Y relative to ground
         };
         
         this.obstacles = [];
@@ -122,7 +153,7 @@ class Game {
         this.isGameStarted = true;
         document.getElementById('gameOverScreen').classList.add('hidden');
         this.updateScore();
-        this.camera.groundY = this.canvas.height * 7/8;
+        this.camera.groundY = this.canvas.height * 9/10;
         this.camera.x = 0;
         this.camera.y = 0;
         this.distanceTraveled = 0;
@@ -160,13 +191,26 @@ class Game {
         
         // Position camera vertically to keep player visible
         // Adjust vertical offset based on distance from ground to show more sky as player ascends
-        const groundOffset = this.canvas.height / 8 * (1 + normalizedDistance * 2);
+        // Reduced ground offset to show just a sliver of ground at the bottom
+        const groundOffset = this.canvas.height / 10 * (1 + normalizedDistance * 2);
         this.camera.y = this.player.y - (this.canvas.height / 2) - groundOffset;
     }
     
     update() {
         // Update camera first
         this.updateCamera();
+        
+        // Update player animation using time-based animation
+        const now = Date.now();
+        if (!this.player.lastFrameTime) {
+            this.player.lastFrameTime = now;
+        }
+        
+        // Check if it's time to advance to the next frame
+        if (now - this.player.lastFrameTime > this.player.frameDuration) {
+            this.player.frameIndex = (this.player.frameIndex + 1) % this.player.numberOfFrames;
+            this.player.lastFrameTime = now;
+        }
         
         if (this.player.isHolding) {
             this.player.velocity += this.player.swoopForce;
@@ -447,44 +491,61 @@ class Game {
         
         // Draw dirt below ground (only showing a small amount)
         this.ctx.fillStyle = '#8B4513'; // Saddle brown for dirt
-        const dirtHeight = this.canvas.height / 8; // Only show a small section of dirt
+        const dirtHeight = this.canvas.height / 20; // Reduced from 1/8 to 1/20 of screen height
         this.ctx.fillRect(-this.canvas.width * 2, this.camera.groundY, this.canvas.width * 5, dirtHeight);
         
         // Draw some dirt details (rocks, etc.)
         this.ctx.fillStyle = '#6B3203'; // Darker brown for dirt details
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < 80; i++) {
             const x = Math.random() * this.canvas.width * 5 - this.canvas.width * 2;
-            const y = this.camera.groundY + Math.random() * (dirtHeight - 5);
-            const rockSize = 2 + Math.random() * 4;
+            const y = this.camera.groundY + Math.random() * (dirtHeight - 3);
+            const rockSize = 1 + Math.random() * 3;
             this.ctx.fillRect(x, y, rockSize, rockSize);
         }
         
         // Draw grass ground as a thin strip
         this.ctx.fillStyle = '#2E8B57';
-        this.ctx.fillRect(-this.canvas.width * 2, this.camera.groundY, this.canvas.width * 5, 3);
+        this.ctx.fillRect(-this.canvas.width * 2, this.camera.groundY, this.canvas.width * 5, 2);
         
         // Draw grass details - taller grass blades
         this.ctx.fillStyle = '#228B22';
-        for (let i = 0; i < 300; i++) {
+        for (let i = 0; i < 250; i++) {
             const x = Math.random() * this.canvas.width * 5 - this.canvas.width * 2;
-            const height = 3 + Math.random() * 8;
+            const height = 2 + Math.random() * 6;
             this.ctx.fillRect(x, this.camera.groundY, 1, -height);
         }
         
-        // Draw player
+        // Draw player sprite with animation
         this.ctx.save();
         this.ctx.translate(
             this.player.x + this.player.width/2,
             this.player.y + this.player.height/2
         );
         this.ctx.rotate(this.player.swoopAngle);
-        this.ctx.fillStyle = '#FFD700';
-        this.ctx.fillRect(
-            -this.player.width/2,
-            -this.player.height/2,
-            this.player.width,
-            this.player.height
-        );
+        
+        // Get the current frame to draw
+        const currentFrame = this.images.playerFrames[this.player.frameIndex];
+        
+        // Handle case if images aren't loaded yet or animation isn't working
+        if (currentFrame && currentFrame.complete) {
+            this.ctx.drawImage(
+                currentFrame,
+                -this.player.width/2,
+                -this.player.height/2,
+                this.player.width,
+                this.player.height
+            );
+        } else {
+            // Fallback to a colored rectangle if animation frames aren't available
+            this.ctx.fillStyle = '#FFD700';
+            this.ctx.fillRect(
+                -this.player.width/2,
+                -this.player.height/2,
+                this.player.width,
+                this.player.height
+            );
+        }
+        
         this.ctx.restore();
         
         // Draw shield if active
