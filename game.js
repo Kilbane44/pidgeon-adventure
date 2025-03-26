@@ -70,6 +70,7 @@ class Game {
         this.camera = {
             scale: 1,
             baseScale: 1,
+            sightBonus: 0,      // New property for sight upgrades
             minScale: 0.5,     // Minimum scale (most zoomed out) at high altitudes
             maxScale: 1.2,     // Maximum scale (most zoomed in) at ground level
             targetScale: 1,
@@ -112,7 +113,7 @@ class Game {
             height: 64, // Adjusted for sprite size
             velocity: 0,
             gravity: 0.1,            // Reduced from 0.15
-            maxVelocity: 4,          // Reduced from 6
+            maxVelocity: 1,          // this is flight speed
             hasShield: false,
             isShrunk: false,
             originalWidth: 64,  // Adjusted for sprite size
@@ -144,7 +145,7 @@ class Game {
         this.powerPoints = [];
         this.score = 0;
         this.powerPointsCollected = 0;
-        this.gameSpeed = 1.5;       // Reduced from 2
+        this.gameSpeed = .5;       // Reduced from 2
         this.isGameOver = false;
         this.isGameStarted = false;
         this.lastObstacleX = 0;
@@ -179,9 +180,13 @@ class Game {
         this.keyDownHandler = (e) => {
             if (e.code === 'Space') {
                 e.preventDefault(); // Prevent page scrolling with space
-                console.log("Space key pressed! isGameStarted:", this.isGameStarted); // Debug
+                console.log("Space key pressed! isGameStarted:", this.isGameStarted, "isGameOver:", this.isGameOver); // Debug
+                console.log("Start screen exists:", document.getElementById('startScreen') !== null);
+                
                 if (!this.isGameStarted) {
+                    console.log("Attempting to start game...");
                     this.startGame();
+                    console.log("After startGame() - isGameStarted:", this.isGameStarted);
                 } else if (!this.isGameOver) {
                     this.player.isHolding = true;
                 }
@@ -223,6 +228,42 @@ class Game {
                 this.buyEnergyUpgrade();
             });
         }
+        
+        // Add buy sight upgrade button handler
+        const buySightBtn = document.getElementById('buySightBtn');
+        if (buySightBtn) {
+            // Remove existing event listeners if any
+            buySightBtn.replaceWith(buySightBtn.cloneNode(true));
+            
+            // Add new event listener
+            document.getElementById('buySightBtn').addEventListener('click', () => {
+                this.buySightUpgrade();
+            });
+        }
+        
+        // Add buy flight speed upgrade button handler
+        const buySpeedBtn = document.getElementById('buySpeedBtn');
+        if (buySpeedBtn) {
+            // Remove existing event listeners if any
+            buySpeedBtn.replaceWith(buySpeedBtn.cloneNode(true));
+            
+            // Add new event listener
+            document.getElementById('buySpeedBtn').addEventListener('click', () => {
+                this.buySpeedUpgrade();
+            });
+        }
+        
+        // Add buy lift power upgrade button handler
+        const buyLiftBtn = document.getElementById('buyLiftBtn');
+        if (buyLiftBtn) {
+            // Remove existing event listeners if any
+            buyLiftBtn.replaceWith(buyLiftBtn.cloneNode(true));
+            
+            // Add new event listener
+            document.getElementById('buyLiftBtn').addEventListener('click', () => {
+                this.buyLiftUpgrade();
+            });
+        }
     }
     
     showStartScreen() {
@@ -259,7 +300,7 @@ class Game {
         this.player.isInCloud = false;
         this.score = 0;
         this.powerPointsCollected = 0;
-        this.gameSpeed = 1.5;
+        this.gameSpeed = .5;
         this.isGameOver = false;
         this.isGameStarted = true;
         document.getElementById('gameOverScreen').classList.add('hidden');
@@ -302,7 +343,9 @@ class Game {
         // Calculate target scale - more zoomed in (higher scale) when closer to ground
         // Linear interpolation between maxScale (at ground) and minScale (at maxHeight)
         // Apply the baseScale as a multiplier to allow power-ups to affect zoom
-        this.camera.targetScale = (this.camera.maxScale - normalizedDistance * (this.camera.maxScale - this.camera.minScale)) * this.camera.baseScale;
+        // Apply sight bonus to reduce the scale (zoom out more)
+        const sightMultiplier = 1 - this.camera.sightBonus;
+        this.camera.targetScale = (this.camera.maxScale - normalizedDistance * (this.camera.maxScale - this.camera.minScale)) * this.camera.baseScale * sightMultiplier;
         
         // Smoothly interpolate current scale to target scale
         this.camera.scale += (this.camera.targetScale - this.camera.scale) * this.camera.zoomSpeed;
@@ -466,7 +509,7 @@ class Game {
         this.updateScore();
         
         if (this.score % 1500 === 0) {
-            this.gameSpeed += 0.3;
+           // this.gameSpeed += 0.3;
         }
         
         // Track previous distance for money earning calculation
@@ -571,8 +614,8 @@ class Game {
     
     generateGroundObstacle() {
         // Create a taller obstacle at ground level
-        const height = 120 + Math.random() * 80; // Taller obstacle to force jumping
-        const width = 40 + Math.random() * 20;   // Random width
+        const height = 120 + Math.random() * 80*this.camera.maxScale; // Taller obstacle to force jumping
+        const width = 40 + Math.random() * 20*this.camera.maxScale;   // Random width
         
         // Position at ground level
         const y = this.camera.groundY - height;
@@ -604,12 +647,12 @@ class Game {
         const powerUp = powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
         
         // Spawn power-ups across the entire height range
-        const minY = -this.camera.maxHeight * 0.9; // Up to 90% of max height
-        const maxY = this.camera.groundY - 50;
+        const minY = -this.camera.maxHeight * 0.9 *this.camera.maxScale; // Up to 90% of max height
+        const maxY = this.camera.groundY - 50*this.camera.maxScale;
         const y = minY + Math.random() * (maxY - minY);
         
         // Spawn power-ups farther out with extra distance during boost
-        const extraDistance = this.player.isBoosting ? 500 : 0;
+        const extraDistance = this.player.isBoosting ? 100 : 0;
         const spawnDistance = this.player.x + this.canvas.width + 300 + extraDistance;
         
         this.powerPoints.push({
@@ -734,13 +777,13 @@ class Game {
         document.getElementById('moneyCollected').textContent = this.powerPointsCollected;
         document.getElementById('totalMoney').textContent = this.totalMoney;
         document.getElementById('currentMaxEnergy').textContent = this.energy.max;
+        document.getElementById('currentSightBonus').textContent = `${Math.round(this.camera.sightBonus * 100)}%`;
+        document.getElementById('currentFlightSpeed').textContent = this.gameSpeed.toFixed(1);
+        document.getElementById('currentLiftPower').textContent = this.player.maxVelocity.toFixed(1);
         document.getElementById('restartButton').textContent = `Sleep and Start Day ${this.currentDay + 1}`;
         
-        // Enable/disable buy button based on money
-        const buyEnergyBtn = document.getElementById('buyEnergyBtn');
-        if (buyEnergyBtn) {
-            buyEnergyBtn.disabled = this.totalMoney < 20;
-        }
+        // Enable/disable buy buttons based on money
+        this.updateShopButtonStates();
         
         // Show game over screen which now functions as shop
         document.getElementById('gameOverScreen').classList.remove('hidden');
@@ -761,6 +804,7 @@ class Game {
         this.camera.scale = 1;
         this.camera.targetScale = 1;
         this.camera.baseScale = 1;
+        // We don't reset camera.sightBonus as it's a permanent upgrade
         this.obstacles = [];
         this.powerPoints = [];
         this.clouds = [];
@@ -768,7 +812,7 @@ class Game {
         this.generateClouds(15);
         this.score = 0;
         this.powerPointsCollected = 0;
-        this.gameSpeed = 1.5;
+        //this.gameSpeed = 1.5;
         this.isGameOver = false;
         this.isGameStarted = true;
         document.getElementById('gameOverScreen').classList.add('hidden');
@@ -791,23 +835,38 @@ class Game {
     }
     
     updateScore() {
-        document.getElementById('score').textContent = `Score: ${this.score}`;
-        document.getElementById('powerPoints').textContent = `Money: ${this.powerPointsCollected}`;
+        const scoreElement = document.getElementById('score');
+        if (scoreElement) {
+            scoreElement.textContent = `Score: ${this.score}`;
+        }
         
-        // Format values for display (round to integers)
-        const currentHeight = Math.round(this.camera.groundY - this.player.y);
-        const formattedDistance = Math.round(this.distanceTraveled);
+        const powerPointsElement = document.getElementById('powerPoints');
+        if (powerPointsElement) {
+            powerPointsElement.textContent = `Money: ${this.powerPointsCollected}`;
+        }
         
-        // Update height and distance
         const heightElement = document.getElementById('height');
-        const distanceElement = document.getElementById('distance');
-        
         if (heightElement) {
+            const currentHeight = Math.floor(this.camera.groundY - this.player.y);
             heightElement.textContent = `Height: ${currentHeight}`;
         }
         
+        const distanceElement = document.getElementById('distance');
         if (distanceElement) {
-            distanceElement.textContent = `Distance: ${formattedDistance}`;
+            distanceElement.textContent = `Distance: ${Math.floor(this.distanceTraveled)}`;
+        }
+        
+        // Add speed display
+        const speedElement = document.getElementById('speed');
+        if (speedElement) {
+            // Display speed rounded to 1 decimal place
+            speedElement.textContent = `Speed: ${this.gameSpeed.toFixed(1)}`;
+        } else if (document.getElementById('scoreDisplay')) {
+            // Create speed element if it doesn't exist but scoreDisplay does
+            const speedSpan = document.createElement('span');
+            speedSpan.id = 'speed';
+            speedSpan.textContent = `Speed: ${this.gameSpeed.toFixed(1)}`;
+            document.getElementById('scoreDisplay').appendChild(speedSpan);
         }
         
         // Update day display separately
@@ -1385,8 +1444,6 @@ class Game {
     }
     
     createUI() {
-        
-        
         // Create a separate day display for the top right
         if (!document.getElementById('dayDisplay')) {
             const dayDiv = document.createElement('div');
@@ -1417,6 +1474,9 @@ class Game {
                     <p>Money Collected: <span id="moneyCollected">0</span></p>
                     <p>Total Money: <span id="totalMoney">0</span></p>
                     <p>Current Max Energy: <span id="currentMaxEnergy">${this.energy.max}</span></p>
+                    <p>Current Sight Bonus: <span id="currentSightBonus">${Math.round(this.camera.sightBonus * 100)}%</span></p>
+                    <p>Flight Speed: <span id="currentFlightSpeed">${this.gameSpeed.toFixed(1)}</span></p>
+                    <p>Lift Power: <span id="currentLiftPower">${this.player.maxVelocity.toFixed(1)}</span></p>
                 </div>
                 
                 <div id="shopUpgrades">
@@ -1425,6 +1485,27 @@ class Game {
                         <p>+10 Max Energy</p>
                         <p class="cost">Cost: 20 Money</p>
                         <button id="buyEnergyBtn">Buy Upgrade</button>
+                    </div>
+                    
+                    <div class="upgrade-item">
+                        <h3>Improve Sight</h3>
+                        <p>See 5% further</p>
+                        <p class="cost">Cost: 30 Money</p>
+                        <button id="buySightBtn">Buy Upgrade</button>
+                    </div>
+                    
+                    <div class="upgrade-item">
+                        <h3>Increase Flight Speed</h3>
+                        <p>+0.1 Game Speed</p>
+                        <p class="cost">Cost: 25 Money</p>
+                        <button id="buySpeedBtn">Buy Upgrade</button>
+                    </div>
+                    
+                    <div class="upgrade-item">
+                        <h3>Improve Lift Power</h3>
+                        <p>+0.2 Max Velocity</p>
+                        <p class="cost">Cost: 25 Money</p>
+                        <button id="buyLiftBtn">Buy Upgrade</button>
                     </div>
                 </div>
                 
@@ -1512,6 +1593,8 @@ class Game {
                 }
                 #shopUpgrades {
                     display: flex;
+                    flex-wrap: wrap;
+                    justify-content: center;
                     gap: 20px;
                     margin: 20px 0;
                 }
@@ -1522,6 +1605,7 @@ class Game {
                     padding: 15px;
                     width: 250px;
                     text-align: center;
+                    margin-bottom: 10px;
                 }
                 .upgrade-item h3 {
                     margin-top: 0;
@@ -1531,7 +1615,7 @@ class Game {
                     font-weight: bold;
                     color: gold;
                 }
-                #buyEnergyBtn {
+                #buyEnergyBtn, #buySightBtn, #buySpeedBtn, #buyLiftBtn {
                     background-color: #4CAF50;
                     border: none;
                     padding: 8px 16px;
@@ -1541,11 +1625,11 @@ class Game {
                     cursor: pointer;
                     transition: all 0.2s ease;
                 }
-                #buyEnergyBtn:hover {
+                #buyEnergyBtn:hover, #buySightBtn:hover, #buySpeedBtn:hover, #buyLiftBtn:hover {
                     background-color: #45a049;
                     transform: scale(1.05);
                 }
-                #buyEnergyBtn:disabled {
+                #buyEnergyBtn:disabled, #buySightBtn:disabled, #buySpeedBtn:disabled, #buyLiftBtn:disabled {
                     background-color: #777;
                     cursor: not-allowed;
                     transform: none;
@@ -1568,15 +1652,82 @@ class Game {
             document.getElementById('totalMoney').textContent = this.totalMoney;
             document.getElementById('currentMaxEnergy').textContent = this.energy.max;
             
-            // Enable/disable buy button based on new money balance
-            const buyEnergyBtn = document.getElementById('buyEnergyBtn');
-            if (buyEnergyBtn) {
-                buyEnergyBtn.disabled = this.totalMoney < ENERGY_UPGRADE_COST;
-            }
+            // Enable/disable buttons based on new money balance
+            this.updateShopButtonStates();
         }
+    }
+    
+    buySightUpgrade() {
+        const SIGHT_UPGRADE_COST = 30;
+        const SIGHT_UPGRADE_AMOUNT = 0.05; // 5% increase in sight distance
+        
+        // Check if player has enough money
+        if (this.totalMoney >= SIGHT_UPGRADE_COST) {
+            // Deduct money and increase sight bonus
+            this.totalMoney -= SIGHT_UPGRADE_COST;
+            this.camera.sightBonus += SIGHT_UPGRADE_AMOUNT;
+            
+            // Update shop screen stats
+            document.getElementById('totalMoney').textContent = this.totalMoney;
+            document.getElementById('currentSightBonus').textContent = `${Math.round(this.camera.sightBonus * 100)}%`;
+            
+            // Enable/disable buttons based on new money balance
+            this.updateShopButtonStates();
+        }
+    }
+    
+    buySpeedUpgrade() {
+        const SPEED_UPGRADE_COST = 25;
+        const SPEED_UPGRADE_AMOUNT = 0.1;
+        
+        // Check if player has enough money
+        if (this.totalMoney >= SPEED_UPGRADE_COST) {
+            // Deduct money and increase game speed
+            this.totalMoney -= SPEED_UPGRADE_COST;
+            this.gameSpeed += SPEED_UPGRADE_AMOUNT;
+            
+            // Update shop screen stats
+            document.getElementById('totalMoney').textContent = this.totalMoney;
+            document.getElementById('currentFlightSpeed').textContent = this.gameSpeed.toFixed(1);
+            
+            // Enable/disable buy button based on new money balance
+            this.updateShopButtonStates();
+        }
+    }
+    
+    buyLiftUpgrade() {
+        const LIFT_UPGRADE_COST = 25;
+        const LIFT_UPGRADE_AMOUNT = 0.2;
+        
+        // Check if player has enough money
+        if (this.totalMoney >= LIFT_UPGRADE_COST) {
+            // Deduct money and increase max velocity
+            this.totalMoney -= LIFT_UPGRADE_COST;
+            this.player.maxVelocity += LIFT_UPGRADE_AMOUNT;
+            
+            // Update shop screen stats
+            document.getElementById('totalMoney').textContent = this.totalMoney;
+            document.getElementById('currentLiftPower').textContent = this.player.maxVelocity.toFixed(1);
+            
+            // Enable/disable buy button based on new money balance
+            this.updateShopButtonStates();
+        }
+    }
+    
+    // Helper method to update all shop button states
+    updateShopButtonStates() {
+        const energyBtn = document.getElementById('buyEnergyBtn');
+        const sightBtn = document.getElementById('buySightBtn');
+        const speedBtn = document.getElementById('buySpeedBtn');
+        const liftBtn = document.getElementById('buyLiftBtn');
+        
+        if (energyBtn) energyBtn.disabled = this.totalMoney < 20;
+        if (sightBtn) sightBtn.disabled = this.totalMoney < 30;
+        if (speedBtn) speedBtn.disabled = this.totalMoney < 25;
+        if (liftBtn) liftBtn.disabled = this.totalMoney < 25;
     }
 }
 
 window.onload = () => {
     new Game();
-}; 
+};
