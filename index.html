@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pidgeon Adventure</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div class="game-info">
+            <div id="score">Score: 0</div>
+            <div id="powerPoints">Power Points: 0</div>
+            <div id="height">Height: 0</div>
+            <div id="distance">Distance: 0</div>
+        </div>
+        <div id="startScreen" class="screen">
+            <h1>Pidgeon Adventure</h1>
+            <p>Press Space to Start</p>
+            <p>Hold Space to Fly</p>
+            <p>Collect Power Points and Dodge Obstacles!</p>
+        </div>
+        <div id="gameOverScreen" class="screen hidden">
+            <h2>Game Over!</h2>
+            <p>Final Score: <span id="finalScore">0</span></p>
+            <p>Power Points Collected: <span id="finalPowerPoints">0</span></p>
+            <p>Maximum Height: <span id="finalHeight">0</span></p>
+            <p>Total Distance: <span id="finalDistance">0</span></p>
+            <button id="restartButton">Play Again</button>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html> 
