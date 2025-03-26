@@ -79,7 +79,16 @@ class Game {
             frameTimer: 0,          // Timer for frame animation
             frameDuration: 125,     // Each frame lasts 125ms (250ms for complete 2-frame cycle)
             numberOfFrames: 2,      // Total number of frames (just 2 frames)
-            startY: groundPosition - 150 // Store starting Y relative to ground
+            startY: groundPosition - 150, // Store starting Y relative to ground
+            
+            // Boost power-up properties - reduced speeds to prevent camera issues
+            isBoosting: false,
+            boostSpeed: 0,
+            boostMaxSpeed: 8,       // Reduced from 15 to prevent objects vanishing
+            boostUpForce: -5,       // Reduced from -10 to be less extreme
+            boostDuration: 3000,    // 3 seconds of boost
+            boostTimer: 0,
+            cometTrail: []          // Array to store comet trail particles
         };
         
         this.obstacles = [];
@@ -187,7 +196,15 @@ class Game {
         this.camera.scale += (this.camera.targetScale - this.camera.scale) * this.camera.zoomSpeed;
         
         // Update camera position to center on player horizontally
-        this.camera.x = this.player.x - (this.canvas.width / 2);
+        // Apply smoother camera transition during boost with lerp
+        const targetX = this.player.x - (this.canvas.width / 2);
+        
+        if (this.player.isBoosting) {
+            // Smoother camera follow during boost (lerp)
+            this.camera.x += (targetX - this.camera.x) * 0.1;
+        } else {
+            this.camera.x = targetX;
+        }
         
         // Position camera vertically to keep player visible
         // Adjust vertical offset based on distance from ground to show more sky as player ascends
@@ -212,6 +229,52 @@ class Game {
             this.player.lastFrameTime = now;
         }
         
+        // Handle boost effect if active
+        if (this.player.isBoosting) {
+            // Calculate boost remaining time
+            const boostElapsed = now - this.player.boostTimer;
+            const boostProgress = Math.min(boostElapsed / this.player.boostDuration, 1);
+            
+            // Gradually decrease boost speed
+            this.player.boostSpeed = this.player.boostMaxSpeed * (1 - boostProgress);
+            
+            // Advance player position based on boost
+            this.player.x += this.player.boostSpeed;
+            
+            // Create trail particles
+            if (Math.random() < 0.3) {
+                this.player.cometTrail.push({
+                    x: this.player.x + this.player.width / 2 - Math.random() * 20,
+                    y: this.player.y + this.player.height / 2 + (Math.random() * 10 - 5),
+                    size: 5 + Math.random() * 10,
+                    opacity: 0.8,
+                    life: 30,
+                    // Add random velocities for more dynamic particles
+                    vx: -Math.random() * 2 - 1,
+                    vy: (Math.random() - 0.5) * 2
+                });
+            }
+            
+            // Update and remove old trail particles
+            this.player.cometTrail.forEach(particle => {
+                particle.opacity -= 0.02;
+                particle.opacity = Math.max(particle.opacity, 0); // Ensure opacity doesn't go negative
+                
+                particle.size -= 0.3;
+                particle.size = Math.max(particle.size, 0.1); // Ensure size doesn't go below 0.1
+                
+                particle.life--;
+                // Move particles according to their velocities
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+            });
+            
+            // Remove dead particles (either by life or size)
+            this.player.cometTrail = this.player.cometTrail.filter(particle => 
+                particle.life > 0 && particle.size > 0.1 && particle.opacity > 0
+            );
+        }
+        
         if (this.player.isHolding) {
             this.player.velocity += this.player.swoopForce;
             this.player.velocity = Math.max(this.player.velocity, -this.player.maxVelocity);
@@ -231,23 +294,45 @@ class Game {
             this.player.swoopAngle = 0;
         }
         
+        // Generate obstacles more frequently based on need and visibility
         if (this.obstacles.length === 0 || 
-            this.canvas.width - this.lastObstacleX > 500) {
+            this.player.x + this.canvas.width - this.lastObstacleX > 500) {
             this.generateObstacle();
+            
+            // Sometimes generate multiple obstacles to fill space
+            if (this.player.isBoosting && Math.random() < 0.5) {
+                setTimeout(() => this.generateObstacle(), 100);
+            }
         }
         
-        if (Math.random() < 0.03) {
+        // Generate power points more aggressively during boost
+        if (Math.random() < (this.player.isBoosting ? 0.05 : 0.03)) {
             this.generatePowerPoint();
         }
         
+        // Keep filtering objects only when they're actually off-screen
+        // Calculate viewport bounds based on camera position and canvas size
+        const viewportLeft = this.camera.x - this.canvas.width / 2;
+        const viewportRight = this.camera.x + this.canvas.width * 1.5; // Extra margin
+        const viewportTop = this.camera.y - this.canvas.height / 2;
+        const viewportBottom = this.camera.y + this.canvas.height * 1.5; // Extra margin
+        
+        // Filter obstacles only when they're well outside the viewport
         this.obstacles = this.obstacles.filter(obstacle => {
             obstacle.x -= this.gameSpeed;
-            return obstacle.x > -obstacle.width - 500;
+            return obstacle.x + obstacle.width > viewportLeft - 500 && 
+                   obstacle.x < viewportRight + 500 &&
+                   obstacle.y + obstacle.height > viewportTop - 500 &&
+                   obstacle.y < viewportBottom + 500;
         });
         
+        // Filter power points only when they're well outside the viewport
         this.powerPoints = this.powerPoints.filter(powerPoint => {
             powerPoint.x -= this.gameSpeed;
-            return powerPoint.x > -powerPoint.width - 500;
+            return powerPoint.x + powerPoint.width > viewportLeft - 500 && 
+                   powerPoint.x < viewportRight + 500 &&
+                   powerPoint.y + powerPoint.height > viewportTop - 500 &&
+                   powerPoint.y < viewportBottom + 500;
         });
         
         this.checkCollisions();
@@ -278,14 +363,16 @@ class Game {
         
         const type = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
         
-        // Place obstacles across a wider vertical range
-        // Make sure obstacles don't spawn too close to the ground
-        const minY = 50;
-        const maxY = this.camera.groundY - type.height - 100;
+        // Place obstacles across the entire height range up to maxHeight
+        // Expanded vertical spawn range to utilize the full flight area
+        const minY = -this.camera.maxHeight * 0.9; // Allow spawning high in the sky
+        const maxY = this.camera.groundY - type.height - 50; // Keep some margin from ground
         const y = minY + Math.random() * (maxY - minY);
         
         // Spawn obstacles farther out for better visibility with camera zoom
-        const spawnDistance = this.canvas.width + 300;
+        // Also further distance when player is boosting
+        const extraDistance = this.player.isBoosting ? 500 : 0;
+        const spawnDistance = this.player.x + this.canvas.width + 300 + extraDistance;
         
         this.obstacles.push({
             x: spawnDistance,
@@ -303,18 +390,20 @@ class Game {
         const powerUpTypes = [
             { type: 'shield', color: '#4169E1' },
             { type: 'shrink', color: '#FF1493' },
-            { type: 'point', color: '#FF69B4' }
+            { type: 'point', color: '#FF69B4' },
+            { type: 'boost', color: '#FF6600' }  // Bright orange for boost
         ];
         
         const powerUp = powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
         
-        // Adjust power-up spawning
-        const minY = 50;
+        // Spawn power-ups across the entire height range
+        const minY = -this.camera.maxHeight * 0.9; // Up to 90% of max height
         const maxY = this.camera.groundY - 50;
         const y = minY + Math.random() * (maxY - minY);
         
-        // Spawn power-ups farther out for better visibility with camera zoom
-        const spawnDistance = this.canvas.width + 300;
+        // Spawn power-ups farther out with extra distance during boost
+        const extraDistance = this.player.isBoosting ? 500 : 0;
+        const spawnDistance = this.player.x + this.canvas.width + 300 + extraDistance;
         
         this.powerPoints.push({
             x: spawnDistance,
@@ -346,6 +435,25 @@ class Game {
                     this.player.width = this.player.originalWidth;
                     this.player.height = this.player.originalHeight;
                 }, this.powerUpDuration);
+                break;
+                
+            case 'boost':
+                // Activate boost mode
+                this.player.isBoosting = true;
+                this.player.boostSpeed = this.player.boostMaxSpeed;
+                this.player.velocity = this.player.boostUpForce; // Initial upward boost
+                this.player.boostTimer = Date.now();
+                this.player.cometTrail = []; // Clear any existing trail
+                
+                // Make sure we don't lose camera tracking during boost
+                this.camera.zoomSpeed = 0.05; // Increase zoom speed during boost
+                
+                // Boost wears off after set duration
+                setTimeout(() => {
+                    this.player.isBoosting = false;
+                    this.player.boostSpeed = 0;
+                    this.camera.zoomSpeed = 0.02; // Reset zoom speed
+                }, this.player.boostDuration);
                 break;
                 
             case 'point':
@@ -436,14 +544,15 @@ class Game {
     generateStars(count) {
         const stars = [];
         const maxHeight = this.camera.maxHeight;
-        const skyWidth = this.canvas.width * 5;
+        // Much wider distribution for stars to cover the entire possible visible area
+        const skyWidth = this.canvas.width * 200;
         
         for (let i = 0; i < count; i++) {
             // Position stars in the upper part of the sky (negative y)
             const starY = -Math.random() * maxHeight * 0.8 - maxHeight * 0.2;
             
             stars.push({
-                x: Math.random() * skyWidth - skyWidth / 2,
+                x: Math.random() * skyWidth,  // Stars now span the full skyWidth
                 y: starY,
                 size: 0.5 + Math.random() * 2,
                 brightness: 0.5 + Math.random() * 0.5
@@ -466,8 +575,16 @@ class Game {
         // Calculate extended sky height
         const skyHeight = this.camera.maxHeight;
         
+        // Calculate sky position relative to camera to ensure it always remains in view
+        // Make sky extremely wide and always centered on the camera
+        const skyWidth = this.canvas.width * 200; // Much wider than before
+        const skyStartX = this.camera.x - skyWidth / 2;
+        
         // Draw extended sky gradient with multiple color stops
-        const skyGradient = this.ctx.createLinearGradient(0, -skyHeight, 0, this.camera.groundY);
+        const skyGradient = this.ctx.createLinearGradient(
+            skyStartX + skyWidth/2, -skyHeight, 
+            skyStartX + skyWidth/2, this.camera.groundY
+        );
         skyGradient.addColorStop(0, '#000000');       // Space - black at very top
         skyGradient.addColorStop(0.1, '#000033');     // Deep space - very dark blue
         skyGradient.addColorStop(0.2, '#000066');     // Night sky
@@ -476,28 +593,43 @@ class Game {
         skyGradient.addColorStop(0.8, '#4A90E2');     // Daytime blue
         skyGradient.addColorStop(1, '#B4D6FF');       // Horizon light blue
         
+        // Draw a much wider and taller sky to prevent black edges
         this.ctx.fillStyle = skyGradient;
-        this.ctx.fillRect(-this.canvas.width * 2, -skyHeight, this.canvas.width * 5, skyHeight + this.camera.groundY + this.canvas.height);
+        this.ctx.fillRect(
+            skyStartX,  // Sky starts relative to camera position
+            -skyHeight - this.canvas.height * 5, // Make sky extend further up
+            skyWidth,   // Extremely wide sky
+            skyHeight + this.camera.groundY + this.canvas.height * 10  // Very tall sky
+        );
         
-        // Draw stars in the upper part of the sky
+        // Reposition stars based on camera position to ensure they remain visible
         this.ctx.fillStyle = '#FFFFFF';
         for (const star of this.stars) {
+            // Calculate star's actual position in the world
+            // We'll maintain the original y position but adjust x position relative to camera
+            const adjustedX = (skyStartX + (star.x + skyWidth/2) % skyWidth);
+            
             this.ctx.globalAlpha = star.brightness;
             this.ctx.beginPath();
-            this.ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+            this.ctx.arc(adjustedX, star.y, star.size, 0, Math.PI * 2);
             this.ctx.fill();
         }
         this.ctx.globalAlpha = 1;  // Reset alpha
         
+        // Calculate extended width for ground elements based on camera position
+        // Make ground elements much wider than the viewport to ensure visibility during boost
+        const groundWidth = this.canvas.width * 50; // Extremely wide ground
+        const groundStartX = this.camera.x - groundWidth / 2; // Center ground on camera
+        
         // Draw dirt below ground (only showing a small amount)
         this.ctx.fillStyle = '#8B4513'; // Saddle brown for dirt
         const dirtHeight = this.canvas.height / 20; // Reduced from 1/8 to 1/20 of screen height
-        this.ctx.fillRect(-this.canvas.width * 2, this.camera.groundY, this.canvas.width * 5, dirtHeight);
+        this.ctx.fillRect(groundStartX, this.camera.groundY, groundWidth, dirtHeight);
         
         // Draw some dirt details (rocks, etc.)
         this.ctx.fillStyle = '#6B3203'; // Darker brown for dirt details
-        for (let i = 0; i < 80; i++) {
-            const x = Math.random() * this.canvas.width * 5 - this.canvas.width * 2;
+        for (let i = 0; i < 300; i++) { // Increased rock count for wider area
+            const x = groundStartX + Math.random() * groundWidth;
             const y = this.camera.groundY + Math.random() * (dirtHeight - 3);
             const rockSize = 1 + Math.random() * 3;
             this.ctx.fillRect(x, y, rockSize, rockSize);
@@ -505,14 +637,47 @@ class Game {
         
         // Draw grass ground as a thin strip
         this.ctx.fillStyle = '#2E8B57';
-        this.ctx.fillRect(-this.canvas.width * 2, this.camera.groundY, this.canvas.width * 5, 2);
+        this.ctx.fillRect(groundStartX, this.camera.groundY, groundWidth, 2);
         
         // Draw grass details - taller grass blades
         this.ctx.fillStyle = '#228B22';
-        for (let i = 0; i < 250; i++) {
-            const x = Math.random() * this.canvas.width * 5 - this.canvas.width * 2;
+        for (let i = 0; i < 800; i++) { // Increased grass count for wider area
+            const x = groundStartX + Math.random() * groundWidth;
             const height = 2 + Math.random() * 6;
             this.ctx.fillRect(x, this.camera.groundY, 1, -height);
+        }
+        
+        // Draw comet trail if boosting
+        if (this.player.isBoosting && this.player.cometTrail.length > 0) {
+            this.player.cometTrail.forEach(particle => {
+                // Skip invalid particles
+                if (particle.size <= 0 || particle.opacity <= 0) return;
+                
+                // Ensure radius is valid for createRadialGradient
+                const radius = Math.max(0.1, particle.size);
+                
+                try {
+                    // Create a gradient for the particle with safe values
+                    const gradient = this.ctx.createRadialGradient(
+                        particle.x, particle.y, 0,
+                        particle.x, particle.y, radius
+                    );
+                    gradient.addColorStop(0, `rgba(255, 255, 255, ${particle.opacity})`);
+                    gradient.addColorStop(0.5, `rgba(255, 200, 0, ${particle.opacity * 0.8})`);
+                    gradient.addColorStop(1, `rgba(255, 100, 0, ${particle.opacity * 0.1})`);
+                    
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.beginPath();
+                    this.ctx.arc(particle.x, particle.y, radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+                } catch (e) {
+                    // If gradient creation still fails, use a simple circle with solid color
+                    this.ctx.fillStyle = `rgba(255, 165, 0, ${particle.opacity})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(particle.x, particle.y, radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            });
         }
         
         // Draw player sprite with animation
@@ -528,6 +693,12 @@ class Game {
         
         // Handle case if images aren't loaded yet or animation isn't working
         if (currentFrame && currentFrame.complete) {
+            // Add glow effect if boosting
+            if (this.player.isBoosting) {
+                this.ctx.shadowColor = 'rgba(255, 165, 0, 0.7)';
+                this.ctx.shadowBlur = 15;
+            }
+            
             this.ctx.drawImage(
                 currentFrame,
                 -this.player.width/2,
@@ -537,7 +708,7 @@ class Game {
             );
         } else {
             // Fallback to a colored rectangle if animation frames aren't available
-            this.ctx.fillStyle = '#FFD700';
+            this.ctx.fillStyle = this.player.isBoosting ? '#FF9500' : '#FFD700';
             this.ctx.fillRect(
                 -this.player.width/2,
                 -this.player.height/2,
@@ -545,7 +716,6 @@ class Game {
                 this.player.height
             );
         }
-        
         this.ctx.restore();
         
         // Draw shield if active
@@ -563,8 +733,8 @@ class Game {
             this.ctx.stroke();
         }
         
-        // Draw obstacles
-        this.ctx.fillStyle = '#2E8B57';
+        // Draw obstacles with boost effect if player is boosting
+        this.ctx.fillStyle = this.player.isBoosting ? '#4CAF50' : '#2E8B57';
         this.obstacles.forEach(obstacle => {
             this.ctx.save();
             this.ctx.translate(
@@ -572,6 +742,14 @@ class Game {
                 obstacle.y + obstacle.height/2
             );
             this.ctx.rotate(obstacle.rotation);
+            
+            // Add motion blur effect if boosting
+            if (this.player.isBoosting) {
+                this.ctx.shadowColor = 'rgba(0, 128, 0, 0.5)';
+                this.ctx.shadowBlur = 10;
+                this.ctx.shadowOffsetX = -5;
+            }
+            
             this.ctx.fillRect(
                 -obstacle.width/2,
                 -obstacle.height/2,
@@ -585,6 +763,13 @@ class Game {
         this.powerPoints.forEach(powerPoint => {
             this.ctx.fillStyle = powerPoint.color;
             this.ctx.beginPath();
+            
+            // Add glow effect to powerups during boost
+            if (this.player.isBoosting) {
+                this.ctx.shadowColor = 'rgba(255, 255, 255, 0.7)';
+                this.ctx.shadowBlur = 15;
+            }
+            
             this.ctx.arc(
                 powerPoint.x + powerPoint.width/2,
                 powerPoint.y + powerPoint.height/2,
@@ -600,7 +785,9 @@ class Game {
             this.ctx.textBaseline = 'middle';
             this.ctx.fillText(
                 powerPoint.type === 'shield' ? '🛡️' : 
-                powerPoint.type === 'shrink' ? '🔽' : '⭐',
+                powerPoint.type === 'shrink' ? '🔽' : 
+                powerPoint.type === 'boost' ? '🚀' :
+                '⭐',
                 powerPoint.x + powerPoint.width/2,
                 powerPoint.y + powerPoint.height/2
             );
