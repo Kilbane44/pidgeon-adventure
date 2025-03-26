@@ -47,9 +47,9 @@ class Game {
         this.camera = {
             scale: 1,
             baseScale: 1,
-            minScale: 0.5,     // More zoom out at height for better visibility
-            maxScale: 0.7,     // Less zoom in at ground
-            targetScale: 0.7,
+            minScale: 0.5,     // Minimum scale (most zoomed out) at high altitudes
+            maxScale: 1.2,     // Maximum scale (most zoomed in) at ground level
+            targetScale: 1,
             zoomSpeed: 0.02,
             groundY: groundPosition,
             x: 0,
@@ -59,6 +59,24 @@ class Game {
         
         // Generate stars once at initialization
         this.stars = this.generateStars(300);
+        
+        // Add cloud system - BUT DON'T GENERATE CLOUDS UNTIL GAME STARTS
+        this.clouds = [];
+        this.cloudParticles = [];  // For exit effect particles
+        
+        // Energy system
+        this.energy = {
+            current: 100,       // Start with full energy
+            max: 100,           // Maximum energy
+            drainRate: 0.0625,  // Energy drain when flying up (reduced from 0.5)
+            groundDrainRate: 0.03125, // Energy drain when on ground (reduced from 0.25)
+            regenRate: 0.02,     // Energy regen when falling
+            isEmpty: false,     // Flag for when energy is depleted
+            barWidth: 200,      // Width of energy bar in pixels
+            barHeight: 20,      // Height of energy bar in pixels
+            barBorderWidth: 3,  // Border width of energy bar
+            barPadding: 5       // Padding inside bar border
+        };
         
         this.player = {
             x: 100,
@@ -85,10 +103,14 @@ class Game {
             isBoosting: false,
             boostSpeed: 0,
             boostMaxSpeed: 8,       // Reduced from 15 to prevent objects vanishing
-            boostUpForce: -5,       // Reduced from -10 to be less extreme
+            boostUpForce: -10,       // Increased upward force for more vertical boost
             boostDuration: 3000,    // 3 seconds of boost
             boostTimer: 0,
-            cometTrail: []          // Array to store comet trail particles
+            cometTrail: [],          // Array to store comet trail particles
+            isInCloud: false, // Track if player is inside a cloud
+            
+            // Energy-related properties
+            isExhausted: false      // Flag for when bird is out of energy
         };
         
         this.obstacles = [];
@@ -105,6 +127,10 @@ class Game {
         this.distanceTraveled = 0;
         this.maxHeight = 0;
         
+        // Ground obstacle tracking
+        this.lastGroundObstacleDistance = 0;  // Track when the last ground obstacle was spawned
+        this.groundObstacleInterval = 3000;   // Spawn ground obstacles every 3000 units
+        
         this.setupEventListeners();
         this.showStartScreen();
     }
@@ -112,6 +138,7 @@ class Game {
     setupEventListeners() {
         document.addEventListener('keydown', (e) => {
             if (e.code === 'Space') {
+                e.preventDefault(); // Prevent page scrolling with space
                 if (!this.isGameStarted) {
                     this.startGame();
                 } else if (!this.isGameOver) {
@@ -121,8 +148,11 @@ class Game {
         });
         
         document.addEventListener('keyup', (e) => {
-            if (e.code === 'Space' && !this.isGameOver) {
-                this.player.isHolding = false;
+            if (e.code === 'Space') {
+                e.preventDefault(); // Prevent page scrolling with space
+                if (!this.isGameOver) {
+                    this.player.isHolding = false;
+                }
             }
         });
         
@@ -139,6 +169,10 @@ class Game {
     startGame() {
         this.isGameStarted = true;
         document.getElementById('startScreen').classList.add('hidden');
+        
+        // Now that the game has started, generate initial clouds
+        this.generateClouds(15);
+        
         this.gameLoop();
     }
     
@@ -155,6 +189,10 @@ class Game {
         this.camera.targetScale = 1;
         this.obstacles = [];
         this.powerPoints = [];
+        this.clouds = [];          // Clear clouds on reset
+        this.cloudParticles = [];  // Clear cloud particles on reset
+        this.generateClouds(15);   // Generate new clouds on reset
+        this.player.isInCloud = false;
         this.score = 0;
         this.powerPointsCollected = 0;
         this.gameSpeed = 2;
@@ -168,6 +206,14 @@ class Game {
         this.distanceTraveled = 0;
         this.maxHeight = 0;
         this.gameLoop();
+        
+        // Reset energy as well
+        this.energy.current = this.energy.max;
+        this.energy.isEmpty = false;
+        this.player.isExhausted = false;
+        
+        // Reset ground obstacle tracking
+        this.lastGroundObstacleDistance = 0;
     }
     
     gameLoop() {
@@ -183,14 +229,12 @@ class Game {
         const distanceFromGround = this.camera.groundY - this.player.y;
         const maxDistance = this.camera.maxHeight;
         
-        // Calculate target scale - now inverted logic with extended range:
-        // Low height (near ground) = high scale value (zoomed in)
-        // High height (far from ground) = low scale value (zoomed out)
+        // Calculate normalized distance (0 = at ground, 1 = at max height)
         const normalizedDistance = Math.min(distanceFromGround / maxDistance, 1);
         
-        // Higher normalizedDistance (higher from ground) means more zoomed out (smaller value)
-        this.camera.targetScale = this.camera.maxScale + 
-            (1 - normalizedDistance) * (this.camera.minScale - this.camera.maxScale);
+        // Calculate target scale - more zoomed in (higher scale) when closer to ground
+        // Linear interpolation between maxScale (at ground) and minScale (at maxHeight)
+        this.camera.targetScale = this.camera.maxScale - normalizedDistance * (this.camera.maxScale - this.camera.minScale);
         
         // Smoothly interpolate current scale to target scale
         this.camera.scale += (this.camera.targetScale - this.camera.scale) * this.camera.zoomSpeed;
@@ -275,7 +319,11 @@ class Game {
             );
         }
         
-        if (this.player.isHolding) {
+        // Update energy based on player state
+        this.updateEnergy();
+        
+        // Handle player movement with energy system
+        if (this.player.isHolding && !this.player.isExhausted) {
             this.player.velocity += this.player.swoopForce;
             this.player.velocity = Math.max(this.player.velocity, -this.player.maxVelocity);
             this.player.swoopAngle = Math.min(this.player.swoopAngle + 0.1, 0.3);
@@ -287,8 +335,11 @@ class Game {
         
         this.player.y += this.player.velocity;
         
+        // Check if player is on the ground
+        const isOnGround = this.player.y + this.player.height >= this.camera.groundY;
+        
         // Only check bottom boundary, allow unlimited upward flight
-        if (this.player.y + this.player.height > this.camera.groundY) {
+        if (isOnGround) {
             this.player.y = this.camera.groundY - this.player.height;
             this.player.velocity = 0;
             this.player.swoopAngle = 0;
@@ -303,6 +354,12 @@ class Game {
             if (this.player.isBoosting && Math.random() < 0.5) {
                 setTimeout(() => this.generateObstacle(), 100);
             }
+        }
+        
+        // Check if it's time to spawn a ground obstacle
+        if (this.distanceTraveled - this.lastGroundObstacleDistance >= this.groundObstacleInterval) {
+            this.generateGroundObstacle();
+            this.lastGroundObstacleDistance = this.distanceTraveled;
         }
         
         // Generate power points more aggressively during boost
@@ -352,6 +409,51 @@ class Game {
         if (currentHeight > this.maxHeight) {
             this.maxHeight = currentHeight;
         }
+        
+        // Update cloud particles
+        this.cloudParticles.forEach(particle => {
+            particle.x += particle.vx;
+            particle.y += particle.vy;
+            particle.life -= 1;
+            particle.opacity -= 0.02;
+            particle.size -= 0.1;
+        });
+        
+        // Remove dead cloud particles
+        this.cloudParticles = this.cloudParticles.filter(particle => 
+            particle.life > 0 && particle.opacity > 0 && particle.size > 0.1
+        );
+        
+        // Check if player entered or exited a cloud
+        let isInCloudNow = false;
+        this.clouds.forEach(cloud => {
+            // Move clouds slightly (they should appear stationary relative to world)
+            cloud.x -= this.gameSpeed * 0.2; // Slower than obstacles to create parallax
+            
+            // Check if player is in this cloud
+            if (this.isPlayerInCloud(this.player, cloud)) {
+                isInCloudNow = true;
+            }
+        });
+        
+        // If player was in a cloud but now exited, create the exit effect
+        if (this.player.isInCloud && !isInCloudNow) {
+            this.createCloudExitEffect();
+        }
+        
+        // Update player's cloud state
+        this.player.isInCloud = isInCloudNow;
+        
+        // Generate a new cloud when one moves too far left
+        if (this.clouds.length < 15) {
+            this.generateClouds(1);
+        }
+        
+        // Remove clouds that are no longer visible
+        const cloudViewportLeft = this.camera.x - this.canvas.width;
+        this.clouds = this.clouds.filter(cloud => {
+            return cloud.x + cloud.width > cloudViewportLeft;
+        });
     }
     
     generateObstacle() {
@@ -386,12 +488,36 @@ class Game {
         this.lastObstacleX = spawnDistance;
     }
     
+    generateGroundObstacle() {
+        // Create a taller obstacle at ground level
+        const height = 120 + Math.random() * 80; // Taller obstacle to force jumping
+        const width = 40 + Math.random() * 20;   // Random width
+        
+        // Position at ground level
+        const y = this.camera.groundY - height;
+        
+        // Spawn ahead of player
+        const spawnDistance = this.player.x + this.canvas.width + 300;
+        
+        // Add a special property to identify it as a ground obstacle
+        this.obstacles.push({
+            x: spawnDistance,
+            y: y,
+            width: width,
+            height: height,
+            passed: false,
+            rotation: 0, // No rotation for ground obstacles
+            isGroundObstacle: true
+        });
+    }
+    
     generatePowerPoint() {
         const powerUpTypes = [
             { type: 'shield', color: '#4169E1' },
             { type: 'shrink', color: '#FF1493' },
-            { type: 'point', color: '#FF69B4' },
-            { type: 'boost', color: '#FF6600' }  // Bright orange for boost
+            { type: 'boost', color: '#FF6600' },  // Bright orange for boost
+            { type: 'money', color: '#FFD700' },   // Gold color for money
+            { type: 'energy', color: '#00FFFF' }   // Cyan color for energy refill
         ];
         
         const powerUp = powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
@@ -456,8 +582,23 @@ class Game {
                 }, this.player.boostDuration);
                 break;
                 
-            case 'point':
+            case 'money':
                 this.powerPointsCollected++;
+                // Money now also gives 10 energy back
+                this.energy.current = Math.min(this.energy.max, this.energy.current + 10);
+                // Reset exhausted state if enough energy was restored
+                if (this.energy.current > 30 && this.energy.isEmpty) {
+                    this.energy.isEmpty = false;
+                    this.player.isExhausted = false;
+                }
+                break;
+                
+            case 'energy':
+                // Full energy refill
+                this.energy.current = this.energy.max;
+                // Reset exhausted state
+                this.energy.isEmpty = false;
+                this.player.isExhausted = false;
                 break;
         }
     }
@@ -522,7 +663,7 @@ class Game {
     
     updateScore() {
         document.getElementById('score').textContent = `Score: ${this.score}`;
-        document.getElementById('powerPoints').textContent = `Power Points: ${this.powerPointsCollected}`;
+        document.getElementById('powerPoints').textContent = `Money: ${this.powerPointsCollected}`;
         
         // Format values for display (round to integers)
         const currentHeight = Math.round(this.camera.groundY - this.player.y);
@@ -562,9 +703,148 @@ class Game {
         return stars;
     }
     
+    generateClouds(count) {
+        for (let i = 0; i < count; i++) {
+            // Random cloud size and shape
+            const width = 200 + Math.random() * 400;
+            const height = 100 + Math.random() * 200;
+            const bubbleCount = 5 + Math.floor(Math.random() * 8);
+            
+            // Position within the cloud layer (3000-8000)
+            const cloudY = -(3000 + Math.random() * 5000);
+            
+            // Spawn ahead of player with some randomness in spacing
+            const minDistance = this.player.x + this.canvas.width;
+            const maxDistance = this.player.x + this.canvas.width * 3;
+            const cloudX = minDistance + Math.random() * (maxDistance - minDistance);
+            
+            // Generate a unique cloud shape using multiple "bubbles"
+            const bubbles = [];
+            for (let j = 0; j < bubbleCount; j++) {
+                bubbles.push({
+                    x: Math.random() * width * 0.8,
+                    y: Math.random() * height * 0.8,
+                    radius: 30 + Math.random() * 70
+                });
+            }
+            
+            this.clouds.push({
+                x: cloudX,
+                y: cloudY,
+                width: width,
+                height: height,
+                bubbles: bubbles,
+                opacity: 0.6 + Math.random() * 0.3 // Semi-transparent
+            });
+        }
+    }
+    
+    isPlayerInCloud(player, cloud) {
+        // First do a quick bounding box check
+        if (player.x > cloud.x + cloud.width || 
+            player.x + player.width < cloud.x || 
+            player.y > cloud.y + cloud.height || 
+            player.y + player.height < cloud.y) {
+            return false;
+        }
+        
+        // For better accuracy, check if player center is in any of the cloud bubbles
+        const playerCenterX = player.x + player.width / 2;
+        const playerCenterY = player.y + player.height / 2;
+        
+        for (const bubble of cloud.bubbles) {
+            const bubbleCenterX = cloud.x + bubble.x + bubble.radius;
+            const bubbleCenterY = cloud.y + bubble.y + bubble.radius;
+            
+            const dx = playerCenterX - bubbleCenterX;
+            const dy = playerCenterY - bubbleCenterY;
+            const distance = Math.sqrt(dx*dx + dy*dy);
+            
+            if (distance < bubble.radius + player.width/2) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    createCloudExitEffect() {
+        const particleCount = 20 + Math.floor(Math.random() * 20);
+        
+        for (let i = 0; i < particleCount; i++) {
+            // Calculate exit direction and speed based on player velocity
+            const speed = 1 + Math.random() * 3;
+            let angle = Math.random() * Math.PI * 2; // Random direction by default
+            
+            // Adjust angle based on player's movement
+            if (Math.abs(this.player.velocity) > 0.5) {
+                // Add bias in the direction of player movement
+                const playerDirection = this.player.velocity > 0 ? Math.PI/2 : -Math.PI/2;
+                angle = playerDirection + (Math.random() - 0.5) * Math.PI; // ±90 degrees
+            }
+            
+            this.cloudParticles.push({
+                x: this.player.x + this.player.width / 2,
+                y: this.player.y + this.player.height / 2,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                size: 3 + Math.random() * 5,
+                opacity: 0.7 + Math.random() * 0.3,
+                life: 20 + Math.random() * 30
+            });
+        }
+    }
+    
+    updateEnergy() {
+        // Determine the player's state for energy adjustment
+        const isOnGround = this.player.y + this.player.height >= this.camera.groundY;
+        const isRising = this.player.velocity < 0;
+        
+        // Handle energy changes based on player state
+        if (this.player.isHolding && !this.player.isExhausted) {
+            // Drain energy when holding space to fly up
+            this.energy.current -= this.energy.drainRate;
+        } else if (isOnGround) {
+            // Drain energy at half rate when on ground
+            this.energy.current -= this.energy.groundDrainRate;
+        } else if (!isRising) {
+            // Regenerate energy when falling freely
+            this.energy.current += this.energy.regenRate;
+        }
+        
+        // Clamp energy between 0 and max
+        this.energy.current = Math.max(0, Math.min(this.energy.current, this.energy.max));
+        
+        // Check if energy is depleted
+        if (this.energy.current <= 0 && !this.energy.isEmpty) {
+            this.energy.isEmpty = true;
+            this.player.isExhausted = true;
+        }
+        
+        // If energy is above 30%, allow flying again
+        if (this.energy.current > 30 && this.energy.isEmpty) {
+            this.energy.isEmpty = false;
+            this.player.isExhausted = false;
+        }
+    }
+    
     draw() {
+        // Clear the canvas regardless of game state
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
+        // If game hasn't started, just draw a simple background
+        if (!this.isGameStarted && !this.isGameOver) {
+            // Draw a simple gradient background for the start screen
+            const startScreenGradient = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+            startScreenGradient.addColorStop(0, '#1E4F9C');  // Deeper blue at top
+            startScreenGradient.addColorStop(1, '#B4D6FF');  // Light blue at bottom
+            
+            this.ctx.fillStyle = startScreenGradient;
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            return;
+        }
+        
+        // Game is running, draw all game elements
         // Apply camera transform
         this.ctx.save();
         this.ctx.translate(this.canvas.width/2, this.canvas.height/2);
@@ -572,6 +852,25 @@ class Game {
         this.ctx.translate(-this.canvas.width/2, -this.canvas.height/2);
         this.ctx.translate(-this.camera.x, -this.camera.y);
         
+        // Draw the world and game elements
+        this.drawSky();
+        this.drawClouds();
+        this.drawGround();
+        this.drawCloudParticles();
+        this.drawCometTrail();
+        this.drawPlayer();
+        this.drawObstacles();
+        this.drawPowerups();
+        
+        // Restore camera transform
+        this.ctx.restore();
+        
+        // Draw UI elements in screen space (not affected by camera)
+        this.drawEnergyBar();
+    }
+    
+    // Split sky drawing into its own method
+    drawSky() {
         // Calculate extended sky height
         const skyHeight = this.camera.maxHeight;
         
@@ -615,7 +914,10 @@ class Game {
             this.ctx.fill();
         }
         this.ctx.globalAlpha = 1;  // Reset alpha
-        
+    }
+    
+    // Split ground drawing into its own method
+    drawGround() {
         // Calculate extended width for ground elements based on camera position
         // Make ground elements much wider than the viewport to ensure visibility during boost
         const groundWidth = this.canvas.width * 50; // Extremely wide ground
@@ -646,8 +948,57 @@ class Game {
             const height = 2 + Math.random() * 6;
             this.ctx.fillRect(x, this.camera.groundY, 1, -height);
         }
-        
-        // Draw comet trail if boosting
+    }
+    
+    drawClouds() {
+        this.clouds.forEach(cloud => {
+            // For each bubble in the cloud, draw a slightly different white circle
+            cloud.bubbles.forEach(bubble => {
+                this.ctx.fillStyle = `rgba(255, 255, 255, ${cloud.opacity})`;
+                this.ctx.beginPath();
+                this.ctx.arc(
+                    cloud.x + bubble.x + bubble.radius, 
+                    cloud.y + bubble.y + bubble.radius, 
+                    bubble.radius, 
+                    0, 
+                    Math.PI * 2
+                );
+                this.ctx.fill();
+            });
+            
+            // Add a subtle glow around the cloud
+            const gradientSize = 50;
+            try {
+                const gradient = this.ctx.createRadialGradient(
+                    cloud.x + cloud.width/2, cloud.y + cloud.height/2, 0,
+                    cloud.x + cloud.width/2, cloud.y + cloud.height/2, cloud.width/2 + gradientSize
+                );
+                gradient.addColorStop(0, `rgba(255, 255, 255, ${cloud.opacity * 0.3})`);
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(
+                    cloud.x - gradientSize, 
+                    cloud.y - gradientSize, 
+                    cloud.width + gradientSize*2, 
+                    cloud.height + gradientSize*2
+                );
+            } catch (e) {
+                // Fallback if gradient creation fails
+            }
+        });
+    }
+    
+    drawCloudParticles() {
+        this.cloudParticles.forEach(particle => {
+            this.ctx.fillStyle = `rgba(255, 255, 255, ${particle.opacity})`;
+            this.ctx.beginPath();
+            this.ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+            this.ctx.fill();
+        });
+    }
+    
+    drawCometTrail() {
         if (this.player.isBoosting && this.player.cometTrail.length > 0) {
             this.player.cometTrail.forEach(particle => {
                 // Skip invalid particles
@@ -679,9 +1030,26 @@ class Game {
                 }
             });
         }
-        
-        // Draw player sprite with animation
+    }
+    
+    drawPlayer() {
+        // Save for rotation
         this.ctx.save();
+        
+        // Reset any shadow effects before drawing the player
+        this.ctx.shadowColor = 'transparent';
+        this.ctx.shadowBlur = 0;
+        
+        // Apply any new shadow effects based on player state
+        if (this.player.isInCloud) {
+            this.ctx.shadowColor = 'rgba(255, 255, 255, 0.7)';
+            this.ctx.shadowBlur = 10;
+        } else if (this.player.isBoosting) {
+            this.ctx.shadowColor = 'rgba(255, 165, 0, 0.7)';
+            this.ctx.shadowBlur = 15;
+        }
+        
+        // Position and rotate player
         this.ctx.translate(
             this.player.x + this.player.width/2,
             this.player.y + this.player.height/2
@@ -693,12 +1061,6 @@ class Game {
         
         // Handle case if images aren't loaded yet or animation isn't working
         if (currentFrame && currentFrame.complete) {
-            // Add glow effect if boosting
-            if (this.player.isBoosting) {
-                this.ctx.shadowColor = 'rgba(255, 165, 0, 0.7)';
-                this.ctx.shadowBlur = 15;
-            }
-            
             this.ctx.drawImage(
                 currentFrame,
                 -this.player.width/2,
@@ -716,6 +1078,7 @@ class Game {
                 this.player.height
             );
         }
+        
         this.ctx.restore();
         
         // Draw shield if active
@@ -732,10 +1095,17 @@ class Game {
             );
             this.ctx.stroke();
         }
-        
-        // Draw obstacles with boost effect if player is boosting
-        this.ctx.fillStyle = this.player.isBoosting ? '#4CAF50' : '#2E8B57';
+    }
+    
+    drawObstacles() {
         this.obstacles.forEach(obstacle => {
+            // Choose color based on obstacle type
+            if (obstacle.isGroundObstacle) {
+                this.ctx.fillStyle = '#8B4513'; // Brown for ground obstacles
+            } else {
+                this.ctx.fillStyle = this.player.isBoosting ? '#4CAF50' : '#2E8B57';
+            }
+            
             this.ctx.save();
             this.ctx.translate(
                 obstacle.x + obstacle.width/2,
@@ -756,10 +1126,28 @@ class Game {
                 obstacle.width,
                 obstacle.height
             );
+            
+            // Add a distinctive pattern to ground obstacles
+            if (obstacle.isGroundObstacle) {
+                this.ctx.fillStyle = '#6B3203'; // Darker brown for details
+                const stripeHeight = 10;
+                const stripeGap = 15;
+                
+                for (let i = 0; i < obstacle.height; i += stripeGap) {
+                    this.ctx.fillRect(
+                        -obstacle.width/2,
+                        -obstacle.height/2 + i,
+                        obstacle.width,
+                        stripeHeight
+                    );
+                }
+            }
+            
             this.ctx.restore();
         });
-        
-        // Draw power points
+    }
+    
+    drawPowerups() {
         this.powerPoints.forEach(powerPoint => {
             this.ctx.fillStyle = powerPoint.color;
             this.ctx.beginPath();
@@ -783,18 +1171,82 @@ class Game {
             this.ctx.font = '16px Arial';
             this.ctx.textAlign = 'center';
             this.ctx.textBaseline = 'middle';
+            
+            // Choose the right emoji based on power-up type
+            let emoji = '💰'; // Default to money bag
+            if (powerPoint.type === 'shield') emoji = '🛡️';
+            else if (powerPoint.type === 'shrink') emoji = '🔽';
+            else if (powerPoint.type === 'boost') emoji = '🚀';
+            else if (powerPoint.type === 'energy') emoji = '⚡';
+            
             this.ctx.fillText(
-                powerPoint.type === 'shield' ? '🛡️' : 
-                powerPoint.type === 'shrink' ? '🔽' : 
-                powerPoint.type === 'boost' ? '🚀' :
-                '⭐',
+                emoji,
                 powerPoint.x + powerPoint.width/2,
                 powerPoint.y + powerPoint.height/2
             );
         });
+    }
+    
+    drawEnergyBar() {
+        // Position the energy bar at the top center of the screen
+        const barX = (this.canvas.width - this.energy.barWidth) / 2;
+        const barY = 20; // 20px from the top
         
-        // Restore camera transform
-        this.ctx.restore();
+        // Draw border
+        this.ctx.fillStyle = '#333';
+        this.ctx.fillRect(
+            barX - this.energy.barBorderWidth, 
+            barY - this.energy.barBorderWidth,
+            this.energy.barWidth + this.energy.barBorderWidth * 2,
+            this.energy.barHeight + this.energy.barBorderWidth * 2
+        );
+        
+        // Draw background
+        this.ctx.fillStyle = '#666';
+        this.ctx.fillRect(
+            barX, 
+            barY,
+            this.energy.barWidth,
+            this.energy.barHeight
+        );
+        
+        // Calculate fill width based on current energy
+        const fillWidth = (this.energy.current / this.energy.max) * this.energy.barWidth;
+        
+        // Choose color based on energy level
+        let fillColor;
+        if (this.energy.current < 20) {
+            fillColor = '#FF0000'; // Red when energy is critical
+        } else if (this.energy.current < 50) {
+            fillColor = '#FFCC00'; // Yellow when energy is low
+        } else {
+            fillColor = '#00CC00'; // Green when energy is good
+        }
+        
+        // Draw energy fill
+        this.ctx.fillStyle = fillColor;
+        this.ctx.fillRect(
+            barX + this.energy.barPadding,
+            barY + this.energy.barPadding,
+            fillWidth - this.energy.barPadding * 2,
+            this.energy.barHeight - this.energy.barPadding * 2
+        );
+        
+        // Format the energy values
+        const currentEnergy = Math.floor(this.energy.current);
+        const maxEnergy = Math.floor(this.energy.max);
+        const energyText = `${currentEnergy}/${maxEnergy}`;
+        
+        // Draw "ENERGY" text with numerical value
+        this.ctx.fillStyle = '#FFF';
+        this.ctx.font = '14px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(
+            `ENERGY ${energyText}`, 
+            barX + this.energy.barWidth / 2, 
+            barY + this.energy.barHeight / 2
+        );
     }
 }
 
