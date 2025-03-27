@@ -1020,6 +1020,11 @@ class Game {
             this.energy.isEmpty = false;
             this.player.isExhausted = false;
         }
+        
+        // End the run if the player is on the ground with 0 energy
+        if (isOnGround && this.energy.current <= 0 && !this.isGameOver) {
+            this.gameOver();
+        }
     }
     
     draw() {
