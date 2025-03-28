@@ -1347,6 +1347,50 @@ class Game {
                 this.ctx.fill();
             }
             
+            // Add MASSIVE number of stars between 10k and 20k feet
+            if (playerHeight > 10000 && playerHeight < 20000) {
+                // Calculate how deep into the 10k-20k range the player is (0 to 1)
+                let midRangeFactor;
+                
+                if (playerHeight < 15000) {
+                    // First half: 0 to 1 as player goes from 10k to 15k
+                    midRangeFactor = (playerHeight - 10000) / 5000;
+                } else {
+                    // Second half: 1 down to 0 as player goes from 15k to 20k
+                    midRangeFactor = (20000 - playerHeight) / 5000;
+                }
+                
+                // Maximum star density at 15k feet (midRangeFactor = 1)
+                const massiveStarCount = Math.floor(midRangeFactor * 2000); // Up to 2000 additional stars at 15k height
+                
+                // Generate massive number of stars
+                for (let i = 0; i < massiveStarCount; i++) {
+                    // Focus these stars in the 10k-20k altitude band
+                    const baseAltitude = this.camera.groundY - 15000; // Center at 15k feet
+                    const altitudeSpread = 5000; // Spread across ±5k feet
+                    const starY = baseAltitude + (Math.random() * 2 - 1) * altitudeSpread;
+                    
+                    // These stars should be small but bright
+                    const starSize = 0.5 + Math.random() * 2;
+                    const starBrightness = 0.7 + Math.random() * 0.3;
+                    
+                    const starX = (skyStartX + Math.random() * skyWidth);
+                    
+                    // Apply twinkling effect
+                    const twinkleSpeed = 0.5 + Math.random() * 2;
+                    const twinklePhase = Math.random() * Math.PI * 2;
+                    const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
+                    
+                    // Smaller glow for these numerous stars for better performance
+                    this.ctx.shadowBlur = 2;
+                    
+                    this.ctx.globalAlpha = starBrightness * twinkleFactor;
+                    this.ctx.beginPath();
+                    this.ctx.arc(starX, starY, starSize, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            }
+            
             // Add colored stars at very high altitudes (above 15,000)
             if (playerHeight > 15000) {
                 const coloredStarFactor = Math.min((playerHeight - 15000) / 15000, 1);
