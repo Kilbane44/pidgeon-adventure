@@ -91,8 +91,10 @@ class Game {
         this.currentDay = 1;
         this.totalMoney = 0;
         
-        // Generate stars once at initialization
-        this.stars = this.generateStars(300);
+        // Generate stars once at initialization - increased star count
+        this.stars = this.generateStars(600);
+        // Add twinkling timer for star animation
+        this.starTwinkleTimer = 0;
         
         // Add cloud system - BUT DON'T GENERATE CLOUDS UNTIL GAME STARTS
         this.clouds = [];
@@ -453,6 +455,9 @@ class Game {
         // Update camera first
         this.updateCamera();
         
+        // Update star twinkling
+        this.starTwinkleTimer += 0.02;
+        
         // Update player animation using time-based animation
         const now = Date.now();
         if (!this.player.lastFrameTime) {
@@ -537,14 +542,24 @@ class Game {
             this.player.swoopAngle = 0;
         }
         
+        // Get player's current height
+        const playerHeight = this.camera.groundY - this.player.y;
+        
         // Generate obstacles more frequently based on need and visibility
         if (this.obstacles.length === 0 || 
-            this.player.x + this.canvas.width - this.lastObstacleX > 500) {
+            this.player.x + this.canvas.width - this.lastObstacleX > 400) { // Reduced from 500 for more obstacles
+            
+            // Generate standard obstacles
             this.generateObstacle();
             
-            // Sometimes generate multiple obstacles to fill space
-            if (this.player.isBoosting && Math.random() < 0.5) {
+            // Generate additional obstacles when boosting
+            if (this.player.isBoosting && Math.random() < 0.6) { // Increased from 0.5
                 setTimeout(() => this.generateObstacle(), 100);
+            }
+            
+            // Check for high altitude to generate airplanes (between 10,000 and 30,000)
+            if (playerHeight > 10000 && Math.random() < 0.3) {
+                this.generateAirplane();
             }
         }
         
@@ -554,9 +569,16 @@ class Game {
             this.lastGroundObstacleDistance = this.distanceTraveled;
         }
         
-        // Generate power points more aggressively during boost
-        if (Math.random() < (this.player.isBoosting ? 0.05 : 0.03)) {
+        // Generate power points more frequently, with emphasis on money
+        // Increased base chance from 0.03 to 0.04
+        const powerupChance = this.player.isBoosting ? 0.07 : 0.04; // Increased from 0.05/0.03
+        if (Math.random() < powerupChance) {
             this.generatePowerPoint();
+            
+            // Extra chance for money powerups
+            if (Math.random() < 0.3) { // 30% chance for an extra money powerup
+                setTimeout(() => this.generateMoneyPowerup(), 50);
+            }
         }
         
         // Keep filtering objects only when they're actually off-screen
@@ -568,7 +590,12 @@ class Game {
         
         // Filter obstacles only when they're well outside the viewport
         this.obstacles = this.obstacles.filter(obstacle => {
-            obstacle.x -= this.gameSpeed;
+            // Apply appropriate speed based on obstacle type
+            if (obstacle.isAirplane) {
+                obstacle.x -= this.gameSpeed * 2; // Airplanes move faster
+            } else {
+                obstacle.x -= this.gameSpeed;
+            }
             return obstacle.x + obstacle.width > viewportLeft - 500 && 
                    obstacle.x < viewportRight + 500 &&
                    obstacle.y + obstacle.height > viewportTop - 500 &&
@@ -590,7 +617,7 @@ class Game {
         this.updateScore();
         
         if (this.score % 1500 === 0) {
-           // this.gameSpeed += 0.3;
+            this.gameSpeed += 0.3;
         }
         
         // Track previous distance for money earning calculation
@@ -718,18 +745,34 @@ class Game {
     
     generatePowerPoint() {
         const powerUpTypes = [
-            { type: 'shield', color: '#4169E1' },
-            { type: 'shrink', color: '#FF1493' },
-            { type: 'boost', color: '#FF6600' },  // Bright orange for boost
-            { type: 'money', color: '#FFD700' },   // Gold color for money
-            { type: 'energy', color: '#00FFFF' }   // Cyan color for energy refill
+            { type: 'shield', color: '#4169E1', weight: 15 },
+            { type: 'shrink', color: '#FF1493', weight: 15 },
+            { type: 'boost', color: '#FF6600', weight: 15 },  // Bright orange for boost
+            { type: 'money', color: '#FFD700', weight: 40 },   // Gold color for money - increased weight
+            { type: 'energy', color: '#00FFFF', weight: 15 }   // Cyan color for energy refill
         ];
         
-        const powerUp = powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
+        // Calculate total weight
+        const totalWeight = powerUpTypes.reduce((sum, type) => sum + type.weight, 0);
+        
+        // Generate a random number between 0 and total weight
+        const randomValue = Math.random() * totalWeight;
+        
+        // Find the selected power-up type based on weight
+        let currentWeight = 0;
+        let selectedPowerUp = powerUpTypes[0];
+        
+        for (const powerUp of powerUpTypes) {
+            currentWeight += powerUp.weight;
+            if (randomValue <= currentWeight) {
+                selectedPowerUp = powerUp;
+                break;
+            }
+        }
         
         // Spawn power-ups across the entire height range
-        const minY = -this.camera.maxHeight * 0.9 *this.camera.maxScale; // Up to 90% of max height
-        const maxY = this.camera.groundY - 50*this.camera.maxScale;
+        const minY = -this.camera.maxHeight * 0.9 * this.camera.maxScale; // Up to 90% of max height
+        const maxY = this.camera.groundY - 50 * this.camera.maxScale;
         const y = minY + Math.random() * (maxY - minY);
         
         // Spawn power-ups farther out with extra distance during boost
@@ -741,8 +784,58 @@ class Game {
             y: y,
             width: 30,
             height: 30,
-            type: powerUp.type,
-            color: powerUp.color
+            type: selectedPowerUp.type,
+            color: selectedPowerUp.color
+        });
+    }
+    
+    // Method to specifically generate money powerups
+    generateMoneyPowerup() {
+        // Spawn money powerups across the entire height range
+        const minY = -this.camera.maxHeight * 0.9 * this.camera.maxScale;
+        const maxY = this.camera.groundY - 50 * this.camera.maxScale;
+        const y = minY + Math.random() * (maxY - minY);
+        
+        // Spawn at a similar distance as regular powerups
+        const extraDistance = this.player.isBoosting ? 100 : 0;
+        const spawnDistance = this.player.x + this.canvas.width + 300 + extraDistance;
+        
+        this.powerPoints.push({
+            x: spawnDistance,
+            y: y,
+            width: 30,
+            height: 30,
+            type: 'money',
+            color: '#FFD700'
+        });
+    }
+    
+    // Method to generate airplane obstacles at high altitudes
+    generateAirplane() {
+        // Airplanes only appear at high altitudes between 10,000 and 30,000
+        const minAltitude = 10000;
+        const maxAltitude = 30000;
+        
+        // Calculate airplane position (y) based on altitude
+        const y = this.camera.groundY - minAltitude - Math.random() * (maxAltitude - minAltitude);
+        
+        // Generate the airplane with a longer width than standard obstacles
+        const width = 120 + Math.random() * 60; // Longer obstacle
+        const height = 30 + Math.random() * 20;  // Not too tall
+        
+        // Spawn ahead of player
+        const spawnDistance = this.player.x + this.canvas.width + 400;
+        
+        // Create the airplane obstacle
+        this.obstacles.push({
+            x: spawnDistance,
+            y: y,
+            width: width,
+            height: height,
+            passed: false,
+            rotation: 0, // No rotation for airplanes
+            isAirplane: true, // Mark as an airplane
+            color: '#A9A9A9' // Gray color for airplanes
         });
     }
     
@@ -893,7 +986,7 @@ class Game {
         this.generateClouds(15);
         this.score = 0;
         this.powerPointsCollected = 0;
-        //this.gameSpeed = 1.5;
+        this.gameSpeed = 0.5; // Reset to initial speed
         this.isGameOver = false;
         this.isGameStarted = true;
         document.getElementById('gameOverScreen').classList.add('hidden');
@@ -970,8 +1063,10 @@ class Game {
             stars.push({
                 x: Math.random() * skyWidth,  // Stars now span the full skyWidth
                 y: starY,
-                size: 0.5 + Math.random() * 2,
-                brightness: 0.5 + Math.random() * 0.5
+                size: 1 + Math.random() * 3,  // Increased base star size
+                brightness: 0.7 + Math.random() * 0.3,  // Increased brightness
+                twinkleSpeed: 0.5 + Math.random() * 2, // How fast the star twinkles
+                twinklePhase: Math.random() * Math.PI * 2 // Random starting phase for twinkling
             });
         }
         
@@ -1181,19 +1276,128 @@ class Game {
             skyHeight + this.camera.groundY + this.canvas.height * 10  // Very tall sky
         );
         
+        // Get player's current height
+        const playerHeight = this.camera.groundY - this.player.y;
+        
+        // Add glow effect for stars
+        this.ctx.shadowColor = 'white';
+        this.ctx.shadowBlur = 3;
+        
         // Reposition stars based on camera position to ensure they remain visible
         this.ctx.fillStyle = '#FFFFFF';
+        
+        // Draw the base set of stars with twinkling effect - use a larger minimum size
         for (const star of this.stars) {
             // Calculate star's actual position in the world
             // We'll maintain the original y position but adjust x position relative to camera
             const adjustedX = (skyStartX + (star.x + skyWidth/2) % skyWidth);
             
-            this.ctx.globalAlpha = star.brightness;
+            // Apply twinkling effect by modulating brightness based on time and star's twinkle speed and phase
+            const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * star.twinkleSpeed + star.twinklePhase);
+            
+            // Apply glow effect for larger stars
+            if (star.size > 2) {
+                this.ctx.shadowBlur = star.size;
+            } else {
+                this.ctx.shadowBlur = 3;
+            }
+            
+            this.ctx.globalAlpha = star.brightness * twinkleFactor;
             this.ctx.beginPath();
             this.ctx.arc(adjustedX, star.y, star.size, 0, Math.PI * 2);
             this.ctx.fill();
         }
-        this.ctx.globalAlpha = 1;  // Reset alpha
+        
+        // Add more stars based on player height - generate more stars at each height
+        if (playerHeight > 5000) {
+            // Start adding extra stars above 5000 height
+            const heightFactor = Math.min((playerHeight - 5000) / 25000, 1); // Maxes out at 30,000 height
+            const extraStarCount = Math.floor(heightFactor * 1200); // Up to 1200 extra stars (increased from 700)
+            
+            // Generate temporary stars based on current position and height
+            for (let i = 0; i < extraStarCount; i++) {
+                // More stars appear higher up (negative y values)
+                const starY = -Math.random() * skyHeight * 0.9 - skyHeight * 0.1;
+                
+                // Stars get brighter the higher you go
+                const heightBrightness = 0.5 + (heightFactor * 0.5);
+                const starBrightness = 0.6 + Math.random() * heightBrightness; // Increased minimum brightness
+                
+                // Stars get bigger the higher you go - increased size
+                const sizeFactor = 1 + heightFactor * 1.5;
+                const starSize = 1 + Math.random() * 3 * sizeFactor;
+                
+                const starX = (skyStartX + Math.random() * skyWidth);
+                
+                // Apply twinkling effect to extra stars too
+                const twinkleSpeed = 0.5 + Math.random() * 2;
+                const twinklePhase = Math.random() * Math.PI * 2;
+                const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
+                
+                // Apply glow effect for larger stars
+                if (starSize > 2) {
+                    this.ctx.shadowBlur = starSize * 1.5;
+                } else {
+                    this.ctx.shadowBlur = 3;
+                }
+                
+                this.ctx.globalAlpha = starBrightness * twinkleFactor;
+                this.ctx.beginPath();
+                this.ctx.arc(starX, starY, starSize, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+            
+            // Add colored stars at very high altitudes (above 15,000)
+            if (playerHeight > 15000) {
+                const coloredStarFactor = Math.min((playerHeight - 15000) / 15000, 1);
+                const coloredStarCount = Math.floor(coloredStarFactor * 300); // Up to 300 colored stars (increased from 200)
+                
+                // Array of star colors - reds, blues, yellows
+                const starColors = [
+                    '#FF5555', // Red
+                    '#5555FF', // Blue
+                    '#FFFF55', // Yellow
+                    '#FF55FF', // Purple
+                    '#55FFFF', // Cyan
+                    '#FF9955'  // Orange
+                ];
+                
+                for (let i = 0; i < coloredStarCount; i++) {
+                    // Colored stars appear very high up
+                    const starY = -skyHeight * 0.5 - Math.random() * skyHeight * 0.5;
+                    
+                    // Colored stars are larger and brighter - increased size
+                    const starSize = 2 + Math.random() * 4 * (1 + coloredStarFactor);
+                    const starBrightness = 0.8 + Math.random() * 0.2;
+                    
+                    const starX = (skyStartX + Math.random() * skyWidth);
+                    
+                    // Apply twinkling effect to colored stars
+                    const twinkleSpeed = 0.5 + Math.random() * 2;
+                    const twinklePhase = Math.random() * Math.PI * 2;
+                    const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
+                    
+                    // Pick a random color
+                    const starColor = starColors[Math.floor(Math.random() * starColors.length)];
+                    this.ctx.fillStyle = starColor;
+                    
+                    // Match shadow color to star color for glow effect
+                    this.ctx.shadowColor = starColor;
+                    this.ctx.shadowBlur = starSize * 2;
+                    
+                    this.ctx.globalAlpha = starBrightness * twinkleFactor;
+                    this.ctx.beginPath();
+                    this.ctx.arc(starX, starY, starSize, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            }
+        }
+        
+        // Reset drawing state
+        this.ctx.fillStyle = '#FFFFFF';
+        this.ctx.globalAlpha = 1;
+        this.ctx.shadowColor = 'transparent';
+        this.ctx.shadowBlur = 0;
     }
     
     // Split ground drawing into its own method
@@ -1382,6 +1586,8 @@ class Game {
             // Choose color based on obstacle type
             if (obstacle.isGroundObstacle) {
                 this.ctx.fillStyle = '#8B4513'; // Brown for ground obstacles
+            } else if (obstacle.isAirplane) {
+                this.ctx.fillStyle = obstacle.color || '#A9A9A9'; // Gray for airplanes
             } else {
                 this.ctx.fillStyle = this.player.isBoosting ? '#4CAF50' : '#2E8B57';
             }
@@ -1400,6 +1606,7 @@ class Game {
                 this.ctx.shadowOffsetX = -5;
             }
             
+            // Draw the obstacle
             this.ctx.fillRect(
                 -obstacle.width/2,
                 -obstacle.height/2,
@@ -1421,6 +1628,40 @@ class Game {
                         stripeHeight
                     );
                 }
+            }
+            
+            // Add distinctive details to airplanes
+            if (obstacle.isAirplane) {
+                // Draw windows
+                this.ctx.fillStyle = '#87CEEB'; // Sky blue for windows
+                const windowSize = 5;
+                const windowGap = 15;
+                
+                for (let i = -obstacle.width/3; i < obstacle.width/2 - windowSize; i += windowGap) {
+                    this.ctx.fillRect(
+                        i,
+                        -obstacle.height/4,
+                        windowSize,
+                        windowSize
+                    );
+                }
+                
+                // Draw wings
+                this.ctx.fillStyle = '#696969'; // Darker gray for wings
+                this.ctx.fillRect(
+                    -obstacle.width/4,
+                    -obstacle.height/2 - obstacle.height * 0.6,
+                    obstacle.width/2,
+                    obstacle.height * 0.6
+                );
+                
+                // Draw tail wing
+                this.ctx.fillRect(
+                    obstacle.width/2 - obstacle.width/5,
+                    -obstacle.height/2 - obstacle.height * 0.3,
+                    obstacle.width/5,
+                    obstacle.height * 0.5
+                );
             }
             
             this.ctx.restore();
