@@ -50,6 +50,12 @@ class Game {
         if (this.keyUpHandler) {
             document.removeEventListener('keyup', this.keyUpHandler);
         }
+        if (this.touchStartHandler) {
+            document.removeEventListener('touchstart', this.touchStartHandler);
+        }
+        if (this.touchEndHandler) {
+            document.removeEventListener('touchend', this.touchEndHandler);
+        }
     }
     
     initGame() {
@@ -175,44 +181,38 @@ class Game {
     setupEventListeners() {
         document.removeEventListener('keydown', this.keyDownHandler);
         document.removeEventListener('keyup', this.keyUpHandler);
+        document.removeEventListener('touchstart', this.touchStartHandler);
+        document.removeEventListener('touchend', this.touchEndHandler);
         
-        // Create bound handlers that we can remove later if needed
-        this.keyDownHandler = (e) => {
-            if (e.code === 'Space') {
-                e.preventDefault(); // Prevent page scrolling with space
-                console.log("Space key pressed! isGameStarted:", this.isGameStarted, "isGameOver:", this.isGameOver); // Debug
-                console.log("Start screen exists:", document.getElementById('startScreen') !== null);
-                
-                if (!this.isGameStarted) {
-                    console.log("Attempting to start game...");
-                    this.startGame();
-                    console.log("After startGame() - isGameStarted:", this.isGameStarted);
-                } else if (!this.isGameOver) {
-                    this.player.isHolding = true;
-                }
-            }
-        };
+        // Bind the handlers to this instance
+        this.keyDownHandler = this.handleKeyDown.bind(this);
+        this.keyUpHandler = this.handleKeyUp.bind(this);
+        this.touchStartHandler = this.handleTouchStart.bind(this);
+        this.touchEndHandler = this.handleTouchEnd.bind(this);
         
-        this.keyUpHandler = (e) => {
-            if (e.code === 'Space') {
-                e.preventDefault(); // Prevent page scrolling with space
-                if (!this.isGameOver) {
-                    this.player.isHolding = false;
-                }
-            }
-        };
-        
+        // Add keyboard event listeners
         document.addEventListener('keydown', this.keyDownHandler);
         document.addEventListener('keyup', this.keyUpHandler);
         
-        // Only add the restart button handler if the button exists
+        // Add touch event listeners
+        document.addEventListener('touchstart', this.touchStartHandler);
+        document.addEventListener('touchend', this.touchEndHandler);
+        
+        // Prevent default touch behaviors that might interfere with the game
+        document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+        
+        // Add start button handler
+        const startButton = document.getElementById('startButton');
+        if (startButton) {
+            startButton.addEventListener('click', () => {
+                this.startGame();
+            });
+        }
+        
+        // Add restart button handler
         const restartButton = document.getElementById('restartButton');
         if (restartButton) {
-            // Remove existing event listeners if any
-            restartButton.replaceWith(restartButton.cloneNode(true));
-            
-            // Add new event listener
-            document.getElementById('restartButton').addEventListener('click', () => {
+            restartButton.addEventListener('click', () => {
                 this.startNextDay();
             });
         }
@@ -266,19 +266,100 @@ class Game {
         }
     }
     
+    handleKeyDown(event) {
+        if (event.code === 'Space') {
+            event.preventDefault(); // Prevent page scrolling with space
+            if (!this.isGameStarted) {
+                this.startGame();
+            } else if (!this.isGameOver) {
+                this.player.isHolding = true;
+            }
+        }
+    }
+    
+    handleKeyUp(event) {
+        if (event.code === 'Space') {
+            event.preventDefault(); // Prevent page scrolling with space
+            if (!this.isGameOver) {
+                this.player.isHolding = false;
+            }
+        }
+    }
+    
+    handleTouchStart(event) {
+        event.preventDefault(); // Prevent scrolling
+        if (!this.isGameStarted) {
+            this.startGame();
+        } else if (!this.isGameOver) {
+            this.player.isHolding = true;
+        }
+    }
+    
+    handleTouchEnd(event) {
+        event.preventDefault(); // Prevent scrolling
+        if (!this.isGameOver) {
+            this.player.isHolding = false;
+        }
+    }
+    
     showStartScreen() {
         document.getElementById('startScreen').classList.remove('hidden');
         document.getElementById('gameOverScreen').classList.add('hidden');
+        
+        // Update start screen text to show both control methods
+        const startScreen = document.getElementById('startScreen');
+        if (startScreen) {
+            startScreen.innerHTML = `
+                <h1>Pidgeon Adventure</h1>
+                <p>Press SPACE or TAP to start flying</p>
+                <p>Hold SPACE or TOUCH to flap wings</p>
+            `;
+        }
     }
     
     startGame() {
-        this.isGameStarted = true;
-        document.getElementById('startScreen').classList.add('hidden');
-        
-        // Now that the game has started, generate initial clouds
-        this.generateClouds(15);
-        
-        this.gameLoop();
+        if (!this.isGameStarted) {
+            this.isGameStarted = true;
+            this.isGameOver = false;
+            this.score = 0;
+            this.powerPointsCollected = 0;
+            this.distanceTraveled = 0;
+            this.maxHeight = 0;
+            this.gameSpeed = .5;
+            this.energy.current = this.energy.max;
+            this.energy.isEmpty = false;
+            this.player.isExhausted = false;
+            this.player.isHolding = false;
+            this.player.velocity = 0;
+            this.player.y = this.player.startY;
+            this.camera.x = 0;
+            this.camera.y = 0;
+            this.camera.scale = 1;
+            this.camera.targetScale = 1;
+            this.camera.baseScale = 1;
+            this.obstacles = [];
+            this.powerPoints = [];
+            this.clouds = [];
+            this.cloudParticles = [];
+            this.generateClouds(15);
+            this.lastObstacleX = 0;
+            this.lastGroundObstacleDistance = 0;
+            
+            // Hide start screen
+            const startScreen = document.getElementById('startScreen');
+            if (startScreen) {
+                startScreen.classList.add('hidden');
+            }
+            
+            // Show score display
+            const scoreDisplay = document.getElementById('scoreDisplay');
+            if (scoreDisplay) {
+                scoreDisplay.classList.remove('hidden');
+            }
+            
+            // Update score display
+            this.updateScore();
+        }
     }
     
     resetGame() {
