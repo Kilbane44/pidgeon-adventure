@@ -11,6 +11,15 @@ class Game {
             playerFrames: []  // Will hold all animation frames
         };
 
+        // Achievement tracking variables
+        this.cloudTime = 0;
+        this.boostCount = 0;
+        this.shieldCount = 0;
+        this.moneyMultiplier = 1;
+        
+        // Initialize achievement system with reference to this game instance
+        this.achievementSystem = new AchievementSystem(this);
+
         // Remove the visible GIF element since we now have frame images
         let loadedFrames = 0;
         
@@ -165,7 +174,7 @@ class Game {
         
         // Ground obstacle tracking
         this.lastGroundObstacleDistance = 0;  // Track when the last ground obstacle was spawned
-        this.groundObstacleInterval = 3000;   // Spawn ground obstacles every 3000 units
+        this.groundObstacleInterval = 6000;   // Increased from 4500 for fewer ground obstacles
         
         // Create UI elements first
         this.createUI();
@@ -277,6 +286,11 @@ class Game {
                 this.player.isHolding = true;
             }
         }
+        
+        // Cheat code - press '1' to get 10,000 money
+        if (event.code === 'Digit1' || event.code === 'Numpad1') {
+            this.activateMoneyCheat();
+        }
     }
     
     handleKeyUp(event) {
@@ -361,6 +375,9 @@ class Game {
             
             // Update score display
             this.updateScore();
+            
+            // Increase ground obstacle interval for fewer ground obstacles
+            this.groundObstacleInterval = 6000; // Increased from 4500
         }
     }
     
@@ -455,8 +472,25 @@ class Game {
         // Update camera first
         this.updateCamera();
         
-        // Update star twinkling
-        this.starTwinkleTimer += 0.02;
+        // Update achievement tracking
+        if (this.player.isInCloud) {
+            this.cloudTime += 1/60; // Assuming 60 FPS
+        }
+        
+        // Update achievement system
+        this.achievementSystem.checkAchievements({
+            currentDay: this.currentDay,
+            maxHeight: this.maxHeight,
+            powerPointsCollected: this.powerPointsCollected,
+            cloudTime: this.cloudTime,
+            boostCount: this.boostCount,
+            shieldCount: this.shieldCount,
+            distanceTraveled: this.distanceTraveled,
+            totalMoney: this.totalMoney
+        });
+        
+        // Update star twinkling - reduced speed
+        this.starTwinkleTimer += 0.01; // Reduced from 0.02 for slower twinkling
         
         // Update player animation using time-based animation
         const now = Date.now();
@@ -545,48 +579,53 @@ class Game {
         // Get player's current height
         const playerHeight = this.camera.groundY - this.player.y;
         
-        // Generate obstacles more frequently based on need and visibility
-        if (this.obstacles.length === 0 || 
-            this.player.x + this.canvas.width - this.lastObstacleX > 400) { // Reduced from 500 for more obstacles
+        // Calculate the visible width based on current camera zoom
+        const visibleWidth = this.canvas.width / this.camera.scale;
+        
+        // Generate obstacles less frequently by increasing the distance threshold
+        // Check if we need more obstacles ahead of the player
+        const lastObstacleDistance = this.player.x + visibleWidth - this.lastObstacleX;
+        if (this.obstacles.length === 0 || lastObstacleDistance > 1200) { // Increased from 800 to 1200
             
             // Generate standard obstacles
             this.generateObstacle();
             
-            // Generate additional obstacles when boosting
-            if (this.player.isBoosting && Math.random() < 0.6) { // Increased from 0.5
+            // Generate additional obstacles when boosting - reduced chance even further
+            if (this.player.isBoosting && Math.random() < 0.1) { // Reduced from 0.2 to 0.1
                 setTimeout(() => this.generateObstacle(), 100);
             }
             
-            // Check for high altitude to generate airplanes (between 10,000 and 30,000)
-            if (playerHeight > 10000 && Math.random() < 0.3) {
+            // Check for high altitude to generate airplanes (between 10,000 and 30,000) - reduced chance
+            if (playerHeight > 10000 && Math.random() < 0.1) { // Reduced from 0.15 to 0.1
                 this.generateAirplane();
             }
         }
         
-        // Check if it's time to spawn a ground obstacle
+        // Check if it's time to spawn a ground obstacle - increase interval even more
         if (this.distanceTraveled - this.lastGroundObstacleDistance >= this.groundObstacleInterval) {
             this.generateGroundObstacle();
             this.lastGroundObstacleDistance = this.distanceTraveled;
         }
         
         // Generate power points more frequently, with emphasis on money
-        // Increased base chance from 0.03 to 0.04
+        // Increased chance to ensure more power-ups appear
         const powerupChance = this.player.isBoosting ? 0.07 : 0.04; // Increased from 0.05/0.03
         if (Math.random() < powerupChance) {
             this.generatePowerPoint();
             
             // Extra chance for money powerups
-            if (Math.random() < 0.3) { // 30% chance for an extra money powerup
+            if (Math.random() < 0.2) { // Kept at 0.2
                 setTimeout(() => this.generateMoneyPowerup(), 50);
             }
         }
         
         // Keep filtering objects only when they're actually off-screen
         // Calculate viewport bounds based on camera position and canvas size
-        const viewportLeft = this.camera.x - this.canvas.width / 2;
-        const viewportRight = this.camera.x + this.canvas.width * 1.5; // Extra margin
-        const viewportTop = this.camera.y - this.canvas.height / 2;
-        const viewportBottom = this.camera.y + this.canvas.height * 1.5; // Extra margin
+        // Adjust viewport calculations to account for camera scale
+        const viewportLeft = this.camera.x - (this.canvas.width / 2) / this.camera.scale;
+        const viewportRight = this.camera.x + (this.canvas.width * 1.5) / this.camera.scale;
+        const viewportTop = this.camera.y - (this.canvas.height / 2) / this.camera.scale;
+        const viewportBottom = this.camera.y + (this.canvas.height * 1.5) / this.camera.scale;
         
         // Filter obstacles only when they're well outside the viewport
         this.obstacles = this.obstacles.filter(obstacle => {
@@ -596,15 +635,17 @@ class Game {
             } else {
                 obstacle.x -= this.gameSpeed;
             }
-            return obstacle.x + obstacle.width > viewportLeft - 500 && 
+            // Only keep obstacles that are close to the visible area or haven't been passed yet
+            return (obstacle.x + obstacle.width > viewportLeft - 500 && 
                    obstacle.x < viewportRight + 500 &&
                    obstacle.y + obstacle.height > viewportTop - 500 &&
-                   obstacle.y < viewportBottom + 500;
+                   obstacle.y < viewportBottom + 500) || !obstacle.passed;
         });
         
         // Filter power points only when they're well outside the viewport
         this.powerPoints = this.powerPoints.filter(powerPoint => {
             powerPoint.x -= this.gameSpeed;
+            // Use the same adjusted viewport bounds for powerpoints
             return powerPoint.x + powerPoint.width > viewportLeft - 500 && 
                    powerPoint.x < viewportRight + 500 &&
                    powerPoint.y + powerPoint.height > viewportTop - 500 &&
@@ -681,43 +722,46 @@ class Game {
             this.generateClouds(1);
         }
         
-        // Remove clouds that are no longer visible
-        const cloudViewportLeft = this.camera.x - this.canvas.width;
+        // Remove clouds that are no longer visible - use the already defined viewportLeft
         this.clouds = this.clouds.filter(cloud => {
-            return cloud.x + cloud.width > cloudViewportLeft;
+            return cloud.x + cloud.width > viewportLeft - 300; // Add some margin for clouds
         });
     }
     
     generateObstacle() {
-        const obstacleTypes = [
-            { width: 60, height: 30 },
-            { width: 30, height: 60 },
-            { width: 40, height: 40 }
-        ];
-        
-        const type = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
-        
-        // Place obstacles across the entire height range up to maxHeight
-        // Expanded vertical spawn range to utilize the full flight area
-        const minY = -this.camera.maxHeight * 0.9; // Allow spawning high in the sky
-        const maxY = this.camera.groundY - type.height - 50; // Keep some margin from ground
-        const y = minY + Math.random() * (maxY - minY);
-        
-        // Spawn obstacles farther out for better visibility with camera zoom
-        // Also further distance when player is boosting
-        const extraDistance = this.player.isBoosting ? 500 : 0;
-        const spawnDistance = this.player.x + this.canvas.width + 300 + extraDistance;
-        
-        this.obstacles.push({
-            x: spawnDistance,
-            y: y,
-            width: type.width,
-            height: type.height,
-            passed: false,
-            rotation: Math.random() * Math.PI * 2
-        });
-        
-        this.lastObstacleX = spawnDistance;
+        // Only generate obstacles with a 30% chance to significantly reduce their frequency
+        if (Math.random() > 0.7) {
+            const obstacleTypes = [
+                { width: 60, height: 30 },
+                { width: 30, height: 60 },
+                { width: 40, height: 40 }
+            ];
+            
+            const type = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
+            
+            // Place obstacles across the entire height range up to maxHeight
+            // Expanded vertical spawn range to utilize the full flight area
+            const minY = -this.camera.maxHeight * 0.9; // Allow spawning high in the sky
+            const maxY = this.camera.groundY - type.height - 50; // Keep some margin from ground
+            const y = minY + Math.random() * (maxY - minY);
+            
+            // Spawn obstacles at a fixed screen-based distance, independent of camera zoom
+            const spawnDistance = this.player.x + (this.canvas.width * 1.2); // 120% of screen width ahead
+            
+            this.obstacles.push({
+                x: spawnDistance,
+                y: y,
+                width: type.width,
+                height: type.height,
+                passed: false,
+                rotation: Math.random() * Math.PI * 2
+            });
+            
+            this.lastObstacleX = spawnDistance;
+        } else {
+            // If we skip obstacle generation, still update lastObstacleX to prevent clustering
+            this.lastObstacleX = this.player.x + (this.canvas.width * 1.2);
+        }
     }
     
     generateGroundObstacle() {
@@ -728,8 +772,11 @@ class Game {
         // Position at ground level
         const y = this.camera.groundY - height;
         
-        // Spawn ahead of player
-        const spawnDistance = this.player.x + this.canvas.width + 300;
+        // Calculate the actual viewport width based on camera zoom
+        const visibleWidth = this.canvas.width / this.camera.minScale; // Width visible at maximum zoom out
+        
+        // Spawn ahead of player, further out to account for zoom
+        const spawnDistance = this.player.x + visibleWidth + 300;
         
         // Add a special property to identify it as a ground obstacle
         this.obstacles.push({
@@ -771,13 +818,13 @@ class Game {
         }
         
         // Spawn power-ups across the entire height range
-        const minY = -this.camera.maxHeight * 0.9 * this.camera.maxScale; // Up to 90% of max height
-        const maxY = this.camera.groundY - 50 * this.camera.maxScale;
+        const minY = -this.camera.maxHeight * 0.9; // Up to 90% of max height
+        const maxY = this.camera.groundY - 50;
         const y = minY + Math.random() * (maxY - minY);
         
-        // Spawn power-ups farther out with extra distance during boost
-        const extraDistance = this.player.isBoosting ? 100 : 0;
-        const spawnDistance = this.player.x + this.canvas.width + 300 + extraDistance;
+        // Spawn power-ups at a fixed screen-based distance
+        // This ensures they spawn on screen regardless of camera zoom
+        const spawnDistance = this.player.x + (this.canvas.width * 0.8); // 80% of screen width ahead
         
         this.powerPoints.push({
             x: spawnDistance,
@@ -792,13 +839,12 @@ class Game {
     // Method to specifically generate money powerups
     generateMoneyPowerup() {
         // Spawn money powerups across the entire height range
-        const minY = -this.camera.maxHeight * 0.9 * this.camera.maxScale;
-        const maxY = this.camera.groundY - 50 * this.camera.maxScale;
+        const minY = -this.camera.maxHeight * 0.9;
+        const maxY = this.camera.groundY - 50;
         const y = minY + Math.random() * (maxY - minY);
         
-        // Spawn at a similar distance as regular powerups
-        const extraDistance = this.player.isBoosting ? 100 : 0;
-        const spawnDistance = this.player.x + this.canvas.width + 300 + extraDistance;
+        // Use fixed screen-based distance to spawn powerups
+        const spawnDistance = this.player.x + (this.canvas.width * 0.8); // 80% of screen width ahead
         
         this.powerPoints.push({
             x: spawnDistance,
@@ -823,7 +869,7 @@ class Game {
         const width = 120 + Math.random() * 60; // Longer obstacle
         const height = 30 + Math.random() * 20;  // Not too tall
         
-        // Spawn ahead of player
+        // Use fixed distance for consistent spawning
         const spawnDistance = this.player.x + this.canvas.width + 400;
         
         // Create the airplane obstacle
@@ -843,6 +889,7 @@ class Game {
         switch(powerUp.type) {
             case 'shield':
                 this.player.hasShield = true;
+                this.shieldCount++;
                 // Shield wears off after 5 seconds
                 setTimeout(() => {
                     this.player.hasShield = false;
@@ -866,6 +913,7 @@ class Game {
                 this.player.velocity = this.player.boostUpForce; // Initial upward boost
                 this.player.boostTimer = Date.now();
                 this.player.cometTrail = []; // Clear any existing trail
+                this.boostCount++;
                 
                 // Make sure we don't lose camera tracking during boost
                 this.camera.zoomSpeed = 0.05; // Increase zoom speed during boost
@@ -879,8 +927,8 @@ class Game {
                 break;
                 
             case 'money':
-                // Increase money by 10 instead of 1
-                this.powerPointsCollected += 10;
+                // Increase money by 10 instead of 1, apply multiplier
+                this.powerPointsCollected += Math.floor(10 * this.moneyMultiplier);
                 // Money now also gives 10 energy back
                 this.energy.current = Math.min(this.energy.max, this.energy.current + 10);
                 // Reset exhausted state if enough energy was restored
@@ -967,6 +1015,11 @@ class Game {
         // Increment day counter
         this.currentDay++;
         
+        // Reset achievement tracking variables
+        this.cloudTime = 0;
+        this.boostCount = 0;
+        this.shieldCount = 0;
+        
         // Reset game (similar to resetGame but keep total money)
         this.player.y = this.player.startY;
         this.player.velocity = 0;
@@ -1006,6 +1059,9 @@ class Game {
         if (dayElement) {
             dayElement.innerHTML = `<span>Day: ${this.currentDay}</span>`;
         }
+        
+        // Increase ground obstacle interval for fewer ground obstacles
+        this.groundObstacleInterval = 2000; // Increased from 4500
     }
     
     updateScore() {
@@ -1063,9 +1119,9 @@ class Game {
             stars.push({
                 x: Math.random() * skyWidth,  // Stars now span the full skyWidth
                 y: starY,
-                size: 1 + Math.random() * 3,  // Increased base star size
-                brightness: 0.7 + Math.random() * 0.3,  // Increased brightness
-                twinkleSpeed: 0.5 + Math.random() * 2, // How fast the star twinkles
+                size: 2 + Math.random() * 4,  // Increased star size even more
+                brightness: 0.8 + Math.random() * 0.2,  // Higher minimum brightness
+                twinkleSpeed: 0.2 + Math.random() * 0.8, // Slower twinkle speed
                 twinklePhase: Math.random() * Math.PI * 2 // Random starting phase for twinkling
             });
         }
@@ -1083,9 +1139,12 @@ class Game {
             // Position within the cloud layer (3000-8000)
             const cloudY = -(3000 + Math.random() * 5000);
             
-            // Spawn ahead of player with some randomness in spacing
-            const minDistance = this.player.x + this.canvas.width;
-            const maxDistance = this.player.x + this.canvas.width * 3;
+            // Calculate the actual viewport width based on camera zoom
+            const visibleWidth = this.canvas.width / this.camera.minScale; // Width visible at maximum zoom out
+            
+            // Spawn ahead of player with some randomness in spacing, accounting for zoom
+            const minDistance = this.player.x + visibleWidth;
+            const maxDistance = this.player.x + visibleWidth * 3;
             const cloudX = minDistance + Math.random() * (maxDistance - minDistance);
             
             // Generate a unique cloud shape using multiple "bubbles"
@@ -1293,13 +1352,14 @@ class Game {
             const adjustedX = (skyStartX + (star.x + skyWidth/2) % skyWidth);
             
             // Apply twinkling effect by modulating brightness based on time and star's twinkle speed and phase
-            const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * star.twinkleSpeed + star.twinklePhase);
+            // Reduced twinkle intensity from 0.3 to 0.15 (less variation)
+            const twinkleFactor = 0.85 + 0.15 * Math.sin(this.starTwinkleTimer * star.twinkleSpeed + star.twinklePhase);
             
             // Apply glow effect for larger stars
             if (star.size > 2) {
-                this.ctx.shadowBlur = star.size;
+                this.ctx.shadowBlur = star.size * 1.5;
             } else {
-                this.ctx.shadowBlur = 3;
+                this.ctx.shadowBlur = 4;
             }
             
             this.ctx.globalAlpha = star.brightness * twinkleFactor;
@@ -1323,22 +1383,22 @@ class Game {
                 const heightBrightness = 0.5 + (heightFactor * 0.5);
                 const starBrightness = 0.6 + Math.random() * heightBrightness; // Increased minimum brightness
                 
-                // Stars get bigger the higher you go - increased size
-                const sizeFactor = 1 + heightFactor * 1.5;
-                const starSize = 1 + Math.random() * 3 * sizeFactor;
+                // Stars get bigger the higher you go - increased size even more
+                const sizeFactor = 1.5 + heightFactor * 2;
+                const starSize = 2 + Math.random() * 4 * sizeFactor;
                 
                 const starX = (skyStartX + Math.random() * skyWidth);
                 
-                // Apply twinkling effect to extra stars too
-                const twinkleSpeed = 0.5 + Math.random() * 2;
+                // Apply twinkling effect to extra stars too - reduced intensity
+                const twinkleSpeed = 0.2 + Math.random() * 0.8;
                 const twinklePhase = Math.random() * Math.PI * 2;
-                const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
+                const twinkleFactor = 0.85 + 0.15 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
                 
                 // Apply glow effect for larger stars
                 if (starSize > 2) {
-                    this.ctx.shadowBlur = starSize * 1.5;
+                    this.ctx.shadowBlur = starSize * 2;
                 } else {
-                    this.ctx.shadowBlur = 3;
+                    this.ctx.shadowBlur = 4;
                 }
                 
                 this.ctx.globalAlpha = starBrightness * twinkleFactor;
@@ -1370,19 +1430,19 @@ class Game {
                     const altitudeSpread = 5000; // Spread across ±5k feet
                     const starY = baseAltitude + (Math.random() * 2 - 1) * altitudeSpread;
                     
-                    // These stars should be small but bright
-                    const starSize = 0.5 + Math.random() * 2;
-                    const starBrightness = 0.7 + Math.random() * 0.3;
+                    // These stars should be small but bright - increased size
+                    const starSize = 1.5 + Math.random() * 3;
+                    const starBrightness = 0.8 + Math.random() * 0.2;
                     
                     const starX = (skyStartX + Math.random() * skyWidth);
                     
-                    // Apply twinkling effect
-                    const twinkleSpeed = 0.5 + Math.random() * 2;
+                    // Apply more subtle twinkling effect
+                    const twinkleSpeed = 0.2 + Math.random() * 0.8;
                     const twinklePhase = Math.random() * Math.PI * 2;
-                    const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
+                    const twinkleFactor = 0.85 + 0.15 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
                     
-                    // Smaller glow for these numerous stars for better performance
-                    this.ctx.shadowBlur = 2;
+                    // Larger glow for better visibility
+                    this.ctx.shadowBlur = 4;
                     
                     this.ctx.globalAlpha = starBrightness * twinkleFactor;
                     this.ctx.beginPath();
@@ -1410,16 +1470,16 @@ class Game {
                     // Colored stars appear very high up
                     const starY = -skyHeight * 0.5 - Math.random() * skyHeight * 0.5;
                     
-                    // Colored stars are larger and brighter - increased size
-                    const starSize = 2 + Math.random() * 4 * (1 + coloredStarFactor);
-                    const starBrightness = 0.8 + Math.random() * 0.2;
+                    // Colored stars are larger and brighter - increased size even more
+                    const starSize = 3 + Math.random() * 5 * (1 + coloredStarFactor);
+                    const starBrightness = 0.9 + Math.random() * 0.1;
                     
                     const starX = (skyStartX + Math.random() * skyWidth);
                     
-                    // Apply twinkling effect to colored stars
-                    const twinkleSpeed = 0.5 + Math.random() * 2;
+                    // Apply more subtle twinkling effect to colored stars
+                    const twinkleSpeed = 0.2 + Math.random() * 0.8;
                     const twinklePhase = Math.random() * Math.PI * 2;
-                    const twinkleFactor = 0.7 + 0.3 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
+                    const twinkleFactor = 0.9 + 0.1 * Math.sin(this.starTwinkleTimer * twinkleSpeed + twinklePhase);
                     
                     // Pick a random color
                     const starColor = starColors[Math.floor(Math.random() * starColors.length)];
@@ -1427,7 +1487,7 @@ class Game {
                     
                     // Match shadow color to star color for glow effect
                     this.ctx.shadowColor = starColor;
-                    this.ctx.shadowBlur = starSize * 2;
+                    this.ctx.shadowBlur = starSize * 3;
                     
                     this.ctx.globalAlpha = starBrightness * twinkleFactor;
                     this.ctx.beginPath();
@@ -2096,6 +2156,66 @@ class Game {
         if (sightBtn) sightBtn.disabled = this.totalMoney < 30;
         if (speedBtn) speedBtn.disabled = this.totalMoney < 25;
         if (liftBtn) liftBtn.disabled = this.totalMoney < 25;
+    }
+    
+    // Cheat code function
+    activateMoneyCheat() {
+        // Add 10,000 money
+        this.powerPointsCollected += 10000;
+        
+        // Update the score display
+        this.updateScore();
+        
+        // Show a brief notification
+        this.showCheatNotification("CHEAT ACTIVATED: +10,000 Money!");
+    }
+    
+    // Helper function to show cheat notification
+    showCheatNotification(message) {
+        // Create notification element if it doesn't exist
+        let notification = document.getElementById('cheatNotification');
+        if (!notification) {
+            notification = document.createElement('div');
+            notification.id = 'cheatNotification';
+            document.body.appendChild(notification);
+            
+            // Add style for the notification
+            const style = document.getElementById('game-styles');
+            if (style) {
+                style.textContent += `
+                    #cheatNotification {
+                        position: absolute;
+                        top: 50%;
+                        left: 50%;
+                        transform: translate(-50%, -50%);
+                        background: rgba(255, 215, 0, 0.8);
+                        color: #000;
+                        padding: 15px 30px;
+                        border-radius: 8px;
+                        font-family: Arial, sans-serif;
+                        font-size: 24px;
+                        font-weight: bold;
+                        z-index: 1000;
+                        opacity: 0;
+                        transition: opacity 0.3s ease;
+                        text-align: center;
+                        pointer-events: none;
+                    }
+                    #cheatNotification.visible {
+                        opacity: 1;
+                    }
+                `;
+            }
+        }
+        
+        // Set message and show notification
+        notification.textContent = message;
+        notification.classList.add('visible');
+        
+        // Hide notification after 2 seconds
+        setTimeout(() => {
+            notification.classList.remove('visible');
+        }, 2000);
     }
 }
 

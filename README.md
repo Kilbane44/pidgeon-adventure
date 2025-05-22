@@ -1,50 +1,45 @@
 # Pidgeon Adventure Game
 
-A beautiful full-screen HTML5 canvas game where you control a flying character (pidgeon) through an endless sky with obstacles and power-ups.
+A fun 2D flying game where you control a pigeon soaring through the sky, collecting power-ups, avoiding obstacles, and upgrading your abilities.
 
 ## Features
 
-- Smooth flying mechanics with intuitive controls
-- Beautiful sky gradient that transitions from horizon to deep space with stars
-- Three different power-ups:
-  - Shield: Protects from one collision with an obstacle
-  - Shrink: Temporarily reduces your size to navigate tight spaces
-  - Points: Increases your power point collection
-- Endless procedurally generated obstacles
-- Score and statistics tracking (distance, height, power points)
-- Responsive full-screen gameplay
-- Dynamic camera that zooms based on altitude
+- Smooth flying mechanics with energy management
+- Power-ups (Shield, Shrink, Boost, Money, Energy)
+- Day/night cycle with beautiful star effects
+- Cloud system with particle effects
+- Upgrade system for:
+  - Max Energy
+  - Sight Range
+  - Flight Speed
+  - Lift Power
+- Achievement system
+- Progressive difficulty
 
 ## How to Play
 
-1. Open the game in a modern web browser
-2. Press the Space bar to start
-3. Hold Space to fly upwards, release to descend
+1. Open `index.html` in a web browser
+2. Press SPACE or tap to start flying
+3. Hold SPACE or touch to flap wings
 4. Collect power-ups and avoid obstacles
-5. Try to achieve the highest score!
+5. Use money earned to upgrade your pigeon's abilities
 
 ## Controls
 
-- **Space Bar (Hold)**: Fly upward
-- **Space Bar (Release)**: Descend
+- **SPACE/Touch**: Hold to fly up, release to glide down
+- **1 Key**: Cheat code for 10,000 money (for testing)
 
-## Installation
+## Development
 
-Simply clone this repository and open `index.html` in a web browser:
+This game is built using vanilla JavaScript and HTML5 Canvas. No external dependencies are required.
 
-```bash
-git clone https://github.com/YourUsername/pidgeon-adventure.git
-cd pidgeon-adventure
-```
+## File Structure
 
-No additional dependencies or build steps required!
-
-## Technology
-
-- HTML5 Canvas for rendering
-- Pure JavaScript for game logic
-- CSS for UI styling
+- `index.html` - Main game file
+- `game.js` - Core game logic
+- `achievements.js` - Achievement system
+- `assets/` - Game assets (images)
 
 ## License
 
-MIT License 
+MIT License - Feel free to use and modify this game as you wish! 
